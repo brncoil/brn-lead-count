@@ -1,0 +1,15 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# npm / node (if ever used for build tooling)
+node_modules/
+package-lock.json
+
+# Composer vendor (none currently, but just in case)
+/vendor/
+
+# WordPress-generated files that should never be committed
+*.log
