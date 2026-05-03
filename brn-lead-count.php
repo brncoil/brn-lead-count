@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, and form submissions).
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -56,6 +56,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // Manual update-check AJAX (admin only).
             add_action( 'wp_ajax_brn_lead_count_check_updates', array( $this, 'ajax_check_updates' ) );
+
+            // Load Chart.js on our admin page only.
+            add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_scripts' ) );
         }
 
         public function maybe_init_options() {
@@ -110,7 +113,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.0.0',
+                '1.1.0',
                 true
             );
 
@@ -287,6 +290,54 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             return isset( $data['Version'] ) ? $data['Version'] : '0.0.0';
         }
 
+        // ── Admin scripts ────────────────────────────────────────────── //
+
+        /**
+         * Enqueues Chart.js in the <head> for our admin settings page only.
+         */
+        public function enqueue_admin_scripts( $hook ) {
+            if ( 'settings_page_brn-lead-count' !== $hook ) {
+                return;
+            }
+            wp_enqueue_script(
+                'brn-chartjs',
+                'https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js',
+                array(),
+                '4.4.3',
+                false // load in <head> so it is available when inline body script runs
+            );
+        }
+
+        /**
+         * Aggregates log entries into a per-date, per-type count array.
+         * Returns: [ 'Y-m-d' => [ 'phone'=>N, 'whatsapp'=>N, 'form_submit'=>N ], ... ]
+         *
+         * @param array $logs
+         * @return array
+         */
+        private function build_analytics_data( array $logs ) {
+            $by_date = array();
+            foreach ( $logs as $log ) {
+                if ( empty( $log['time'] ) || empty( $log['type'] ) ) {
+                    continue;
+                }
+                $date = substr( $log['time'], 0, 10 ); // Y-m-d
+                if ( ! isset( $by_date[ $date ] ) ) {
+                    $by_date[ $date ] = array(
+                        'phone'       => 0,
+                        'whatsapp'    => 0,
+                        'form_submit' => 0,
+                    );
+                }
+                $type = $log['type'];
+                if ( array_key_exists( $type, $by_date[ $date ] ) ) {
+                    $by_date[ $date ][ $type ]++;
+                }
+            }
+            ksort( $by_date );
+            return $by_date;
+        }
+
         // ── Settings ─────────────────────────────────────────────────────── //
 
         public function sanitize_settings( $input ) {
@@ -351,6 +402,209 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                         </tr>
                     </tbody>
                 </table>
+
+                <?php
+                // ── Analytics section ───────────────────────────────────── //
+                $analytics_data = $this->build_analytics_data( $logs );
+                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- wp_json_encode produces safe JSON
+                $analytics_json = wp_json_encode( $analytics_data );
+                ?>
+
+                <h2 style="margin-top:32px;"><?php esc_html_e( 'Analytics', 'brn-lead-count' ); ?></h2>
+
+                <?php if ( empty( $analytics_data ) ) : ?>
+                    <p style="color:#646970;">
+                        <?php esc_html_e( 'No data yet. Make sure “Enable Event Logs” is turned on in Settings below, then lead events will appear here.', 'brn-lead-count' ); ?>
+                    </p>
+                <?php else : ?>
+
+                    <!-- Filter bar -->
+                    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:16px;">
+                        <label style="font-weight:600;">
+                            <?php esc_html_e( 'From', 'brn-lead-count' ); ?>:
+                            <input type="date" id="brn-date-from" style="margin-left:4px;" />
+                        </label>
+                        <label style="font-weight:600;">
+                            <?php esc_html_e( 'To', 'brn-lead-count' ); ?>:
+                            <input type="date" id="brn-date-to" style="margin-left:4px;" />
+                        </label>
+                        <div style="display:flex;gap:4px;flex-wrap:wrap;">
+                            <button type="button" class="button button-primary brn-type-btn" data-type="all"><?php esc_html_e( 'All', 'brn-lead-count' ); ?></button>
+                            <button type="button" class="button button-primary brn-type-btn" data-type="phone"><?php esc_html_e( 'Phone', 'brn-lead-count' ); ?></button>
+                            <button type="button" class="button button-primary brn-type-btn" data-type="whatsapp"><?php esc_html_e( 'WhatsApp', 'brn-lead-count' ); ?></button>
+                            <button type="button" class="button button-primary brn-type-btn" data-type="form_submit"><?php esc_html_e( 'Form Submit', 'brn-lead-count' ); ?></button>
+                        </div>
+                    </div>
+
+                    <!-- Summary cards -->
+                    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:20px;">
+                        <div style="background:#2271b1;color:#fff;padding:12px 24px;border-radius:6px;min-width:110px;text-align:center;">
+                            <div style="font-size:30px;font-weight:700;line-height:1.2;" id="brn-sum-phone">0</div>
+                            <div style="font-size:12px;margin-top:4px;opacity:.9;"><?php esc_html_e( 'Phone', 'brn-lead-count' ); ?></div>
+                        </div>
+                        <div style="background:#00a32a;color:#fff;padding:12px 24px;border-radius:6px;min-width:110px;text-align:center;">
+                            <div style="font-size:30px;font-weight:700;line-height:1.2;" id="brn-sum-whatsapp">0</div>
+                            <div style="font-size:12px;margin-top:4px;opacity:.9;"><?php esc_html_e( 'WhatsApp', 'brn-lead-count' ); ?></div>
+                        </div>
+                        <div style="background:#dba617;color:#fff;padding:12px 24px;border-radius:6px;min-width:110px;text-align:center;">
+                            <div style="font-size:30px;font-weight:700;line-height:1.2;" id="brn-sum-form">0</div>
+                            <div style="font-size:12px;margin-top:4px;opacity:.9;"><?php esc_html_e( 'Form Submit', 'brn-lead-count' ); ?></div>
+                        </div>
+                        <div style="background:#3c434a;color:#fff;padding:12px 24px;border-radius:6px;min-width:110px;text-align:center;">
+                            <div style="font-size:30px;font-weight:700;line-height:1.2;" id="brn-sum-total">0</div>
+                            <div style="font-size:12px;margin-top:4px;opacity:.9;"><?php esc_html_e( 'Total', 'brn-lead-count' ); ?></div>
+                        </div>
+                    </div>
+
+                    <!-- Chart -->
+                    <div style="max-width:960px;background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:16px;">
+                        <p id="brn-chart-empty" style="display:none;color:#646970;text-align:center;padding:40px 0;margin:0;">
+                            <?php esc_html_e( 'No events in this date range.', 'brn-lead-count' ); ?>
+                        </p>
+                        <canvas id="brn-analytics-chart" style="max-height:340px;"></canvas>
+                    </div>
+
+                    <script>
+                    (function () {
+                        if ( typeof Chart === 'undefined' ) { return; }
+
+                        var rawData  = <?php echo $analytics_json; ?>;
+                        var allDates = Object.keys( rawData ).sort();
+
+                        var fromInput = document.getElementById( 'brn-date-from' );
+                        var toInput   = document.getElementById( 'brn-date-to' );
+
+                        // Default range: last 30 days (or earliest date in data if more recent)
+                        var today   = new Date().toISOString().slice( 0, 10 );
+                        var d30     = new Date( Date.now() - 29 * 86400000 ).toISOString().slice( 0, 10 );
+                        var minDate = allDates.length ? allDates[0] : d30;
+
+                        fromInput.value = ( d30 < minDate ) ? minDate : d30;
+                        toInput.value   = today;
+                        fromInput.min   = minDate;
+                        toInput.min     = minDate;
+                        fromInput.max   = today;
+                        toInput.max     = today;
+
+                        var selectedTypes = [ 'phone', 'whatsapp', 'form_submit' ];
+                        var chart         = null;
+
+                        var COLORS = {
+                            phone      : { bg: 'rgba(34,113,177,0.8)',  border: '#2271b1' },
+                            whatsapp   : { bg: 'rgba(0,163,42,0.8)',    border: '#00a32a' },
+                            form_submit: { bg: 'rgba(219,166,23,0.8)', border: '#dba617' }
+                        };
+
+                        var LABELS = {
+                            phone      : <?php echo wp_json_encode( __( 'Phone', 'brn-lead-count' ) ); ?>,
+                            whatsapp   : <?php echo wp_json_encode( __( 'WhatsApp', 'brn-lead-count' ) ); ?>,
+                            form_submit: <?php echo wp_json_encode( __( 'Form Submit', 'brn-lead-count' ) ); ?>
+                        };
+
+                        function filteredDates() {
+                            var from = fromInput.value;
+                            var to   = toInput.value;
+                            return allDates.filter( function ( d ) { return d >= from && d <= to; } );
+                        }
+
+                        function renderChart() {
+                            var dates = filteredDates();
+
+                            // Update summary cards
+                            var sums = { phone: 0, whatsapp: 0, form_submit: 0 };
+                            dates.forEach( function ( d ) {
+                                if ( ! rawData[ d ] ) { return; }
+                                sums.phone       += rawData[ d ].phone       || 0;
+                                sums.whatsapp    += rawData[ d ].whatsapp    || 0;
+                                sums.form_submit += rawData[ d ].form_submit || 0;
+                            } );
+                            document.getElementById( 'brn-sum-phone' ).textContent    = sums.phone;
+                            document.getElementById( 'brn-sum-whatsapp' ).textContent = sums.whatsapp;
+                            document.getElementById( 'brn-sum-form' ).textContent     = sums.form_submit;
+                            document.getElementById( 'brn-sum-total' ).textContent    = sums.phone + sums.whatsapp + sums.form_submit;
+
+                            var empty  = document.getElementById( 'brn-chart-empty' );
+                            var canvas = document.getElementById( 'brn-analytics-chart' );
+
+                            if ( dates.length === 0 ) {
+                                empty.style.display  = 'block';
+                                canvas.style.display = 'none';
+                                return;
+                            }
+                            empty.style.display  = 'none';
+                            canvas.style.display = 'block';
+
+                            var datasets = [ 'phone', 'whatsapp', 'form_submit' ]
+                                .filter( function ( t ) { return selectedTypes.indexOf( t ) > -1; } )
+                                .map( function ( t ) {
+                                    return {
+                                        label          : LABELS[ t ],
+                                        data           : dates.map( function ( d ) { return ( rawData[ d ] && rawData[ d ][ t ] ) || 0; } ),
+                                        backgroundColor: COLORS[ t ].bg,
+                                        borderColor    : COLORS[ t ].border,
+                                        borderWidth    : 1,
+                                        borderRadius   : 3
+                                    };
+                                } );
+
+                            if ( chart ) {
+                                chart.data.labels   = dates;
+                                chart.data.datasets = datasets;
+                                chart.update();
+                            } else {
+                                chart = new Chart( canvas.getContext( '2d' ), {
+                                    type: 'bar',
+                                    data: { labels: dates, datasets: datasets },
+                                    options: {
+                                        responsive  : true,
+                                        interaction : { mode: 'index', intersect: false },
+                                        plugins     : { legend: { position: 'top' } },
+                                        scales      : {
+                                            x: { stacked: true, ticks: { maxRotation: 45, minRotation: 0 } },
+                                            y: { stacked: true, beginAtZero: true, ticks: { stepSize: 1 } }
+                                        }
+                                    }
+                                } );
+                            }
+                        }
+
+                        // Type-filter toggle buttons
+                        document.querySelectorAll( '.brn-type-btn' ).forEach( function ( btn ) {
+                            btn.addEventListener( 'click', function () {
+                                var type = this.getAttribute( 'data-type' );
+
+                                if ( type === 'all' ) {
+                                    selectedTypes = [ 'phone', 'whatsapp', 'form_submit' ];
+                                } else {
+                                    var idx = selectedTypes.indexOf( type );
+                                    if ( idx > -1 ) {
+                                        if ( selectedTypes.length > 1 ) { selectedTypes.splice( idx, 1 ); }
+                                    } else {
+                                        selectedTypes.push( type );
+                                    }
+                                }
+
+                                // Sync button active states
+                                document.querySelectorAll( '.brn-type-btn' ).forEach( function ( b ) {
+                                    var bt     = b.getAttribute( 'data-type' );
+                                    var active = ( bt === 'all' )
+                                        ? selectedTypes.length === 3
+                                        : selectedTypes.indexOf( bt ) > -1;
+                                    b.classList.toggle( 'button-primary', active );
+                                } );
+
+                                renderChart();
+                            } );
+                        } );
+
+                        fromInput.addEventListener( 'change', renderChart );
+                        toInput.addEventListener( 'change', renderChart );
+
+                        renderChart();
+                    }());
+                    </script>
+
+                <?php endif; ?>
 
                 <h2 style="margin-top:24px;"><?php esc_html_e( 'Settings', 'brn-lead-count' ); ?></h2>
                 <form method="post" action="options.php" style="max-width:640px;">
