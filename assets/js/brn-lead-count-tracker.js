@@ -7,52 +7,8 @@
 
     var endpoint = brnLeadCountData.ajaxUrl;
     var nonce = brnLeadCountData.nonce;
-    var recentLeadKeys = Object.create(null);
-    var elementorHooksBound = false;
-
-    function shouldSkipDuplicate(leadType, label) {
-        var key = leadType + '|' + (label || '');
-        var now = Date.now();
-        var lastSeen = recentLeadKeys[key] || 0;
-
-        if (now - lastSeen < 3000) {
-            return true;
-        }
-
-        recentLeadKeys[key] = now;
-        return false;
-    }
-
-    function trackGa4Event(leadType, label) {
-        var eventName = 'brn_lead_' + leadType;
-        var params = {
-            lead_type: leadType,
-            lead_label: (label || '').substring(0, 180),
-            page_location: window.location.href
-        };
-
-        if (typeof window.gtag === 'function') {
-            window.gtag('event', eventName, params);
-            return;
-        }
-
-        if (Array.isArray(window.dataLayer)) {
-            window.dataLayer.push({
-                event: eventName,
-                lead_type: params.lead_type,
-                lead_label: params.lead_label,
-                page_location: params.page_location
-            });
-        }
-    }
 
     function sendLead(leadType, label) {
-        if (shouldSkipDuplicate(leadType, label)) {
-            return;
-        }
-
-        trackGa4Event(leadType, label);
-
         var data = new URLSearchParams();
         data.append('action', 'brn_lead_count_track');
         data.append('nonce', nonce);
@@ -79,28 +35,6 @@
         }).catch(function () {
             // Ignore network failures to avoid blocking user actions.
         });
-    }
-
-    function buildFormLabel(form, prefix) {
-        var action = (form.getAttribute('action') || '').trim();
-        var id = (form.getAttribute('id') || '').trim();
-        var name = (form.getAttribute('name') || '').trim();
-
-        var labelParts = [];
-        if (prefix) {
-            labelParts.push(prefix);
-        }
-        if (id) {
-            labelParts.push('id:' + id);
-        }
-        if (name) {
-            labelParts.push('name:' + name);
-        }
-        if (action) {
-            labelParts.push('action:' + action.substring(0, 120));
-        }
-
-        return labelParts.join(' | ');
     }
 
     function getTextContent(el) {
@@ -134,6 +68,11 @@
             return;
         }
 
+        if (normalized.indexOf('mailto:') === 0) {
+            sendLead('email', getTextContent(link));
+            return;
+        }
+
         var isWhatsapp = normalized.indexOf('whatsapp://') === 0 ||
             normalized.indexOf('https://wa.me/') === 0 ||
             normalized.indexOf('http://wa.me/') === 0 ||
@@ -152,75 +91,21 @@
             return;
         }
 
-        // Elementor forms: capture submit as fallback in case success hooks are unavailable.
-        if (form.classList.contains('elementor-form')) {
-            sendLead('form_submit', buildFormLabel(form, 'elementor:submit'));
-            return;
+        var action = (form.getAttribute('action') || '').trim();
+        var id = (form.getAttribute('id') || '').trim();
+        var name = (form.getAttribute('name') || '').trim();
+
+        var labelParts = [];
+        if (id) {
+            labelParts.push('id:' + id);
+        }
+        if (name) {
+            labelParts.push('name:' + name);
+        }
+        if (action) {
+            labelParts.push('action:' + action.substring(0, 120));
         }
 
-        sendLead('form_submit', buildFormLabel(form, 'form:submit'));
+        sendLead('form_submit', labelParts.join(' | '));
     }, true);
-
-    function bindElementorHooks() {
-        if (elementorHooksBound || typeof window.jQuery === 'undefined') {
-            return;
-        }
-
-        elementorHooksBound = true;
-
-        window.jQuery(document).on('submit_success', function (event, response) {
-            var form = event && event.target ? event.target : null;
-            var formId = '';
-            var formName = '';
-
-            if (response && response.data) {
-                if (response.data.form_id) {
-                    formId = String(response.data.form_id);
-                }
-                if (response.data.form_name) {
-                    formName = String(response.data.form_name);
-                }
-            }
-
-            if (form && form.getAttribute) {
-                formId = formId || (form.getAttribute('id') || '').trim();
-                formName = formName || (form.getAttribute('name') || '').trim();
-            }
-
-            var labelParts = ['elementor:success'];
-            if (formName) {
-                labelParts.push('name:' + formName);
-            }
-            if (formId) {
-                labelParts.push('id:' + formId);
-            }
-
-            sendLead('form_submit', labelParts.join(' | '));
-        });
-
-        // Some Elementor setups emit response events via ajaxComplete; detect successful form responses.
-        window.jQuery(document).ajaxComplete(function (event, xhr, settings) {
-            if (!settings || !settings.url || settings.url.indexOf('admin-ajax.php') === -1) {
-                return;
-            }
-
-            var data = settings.data || '';
-            if (typeof data !== 'string' || data.indexOf('action=elementor_pro_forms_send_form') === -1) {
-                return;
-            }
-
-            var responseText = xhr && typeof xhr.responseText === 'string' ? xhr.responseText : '';
-            if (!responseText || responseText.indexOf('"success":true') === -1) {
-                return;
-            }
-
-            sendLead('form_submit', 'elementor:ajax_success');
-        });
-    }
-
-    bindElementorHooks();
-
-    document.addEventListener('DOMContentLoaded', function () {
-        bindElementorHooks();
-    });
 })();
