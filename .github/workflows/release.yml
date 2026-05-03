@@ -1,0 +1,70 @@
+name: Build & Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # Triggered by any tag like v1.0.0, v1.2.3
+
+permissions:
+  contents: write  # Required to create a GitHub Release and upload assets
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Derive the version from the git tag (strips the leading "v")
+      - name: Set version variable
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Build the installable ZIP with the required WordPress folder structure:
+      #   brn-lead-count/
+      #     brn-lead-count.php
+      #     assets/
+      #     includes/
+      #     index.php
+      - name: Create installable ZIP
+        run: |
+          SLUG="brn-lead-count"
+          ZIP_NAME="${SLUG}-${{ steps.version.outputs.VERSION }}.zip"
+
+          # Create a clean staging directory
+          mkdir -p "staging/${SLUG}"
+
+          # Copy all plugin files (excluding git internals and dev files)
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.gitignore' \
+            --exclude='staging' \
+            --exclude='*.md' \
+            . "staging/${SLUG}/"
+
+          # Package with the folder at the root of the ZIP
+          cd staging
+          zip -r "../${ZIP_NAME}" "${SLUG}/"
+          cd ..
+
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      # Create the GitHub Release and attach the ZIP as a release asset
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "BRN Lead Count ${{ steps.version.outputs.VERSION }}"
+          body: |
+            ## What's new in ${{ steps.version.outputs.VERSION }}
+
+            See commit history for details.
+
+            ### Installation
+            Download `${{ env.ZIP_NAME }}` below and install via **Plugins → Upload Plugin** in WordPress.
+            Sites already running this plugin will receive this update automatically within 24 hours.
+          files: ${{ env.ZIP_NAME }}
+          draft: false
+          prerelease: false
