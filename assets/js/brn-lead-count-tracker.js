@@ -15,6 +15,7 @@
         data.append('lead_type', leadType);
         data.append('label', label || '');
         data.append('url', window.location.href);
+        data.append('page_title', document.title || '');
 
         if (navigator.sendBeacon) {
             var blob = new Blob([data.toString()], {

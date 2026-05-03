@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -459,13 +459,15 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'form_submit' => 0,
                 'total'       => 0,
             );
+            $tz = wp_timezone();
 
             foreach ( $logs as $log ) {
                 if ( ! is_array( $log ) || empty( $log['time'] ) || ! empty( $log['is_test'] ) ) {
                     continue;
                 }
 
-                $ts = strtotime( (string) $log['time'] );
+                $dt = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', (string) $log['time'], $tz );
+                $ts = $dt ? $dt->getTimestamp() : false;
                 if ( false === $ts || $ts < $start_ts || $ts > $end_ts ) {
                     continue;
                 }
@@ -491,7 +493,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $logs  = isset( $stats['logs'] ) && is_array( $stats['logs'] ) ? $stats['logs'] : array();
 
             $tz   = wp_timezone();
-            $now  = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : current_time( 'timestamp' ) ) );
+            $now  = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : time() ) );
             $now  = $now->setTimezone( $tz );
 
             $today_start = $now->setTime( 0, 0, 0 );
@@ -714,7 +716,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $sent = wp_mail( $emails, $subject, $message, $headers );
             if ( $sent ) {
-                update_option( self::OPTION_LAST_REPORT_SENT, current_time( 'timestamp' ), false );
+                update_option( self::OPTION_LAST_REPORT_SENT, time(), false );
             }
 
             return (bool) $sent;
@@ -729,7 +731,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.2.0',
+                '1.3.0',
                 true
             );
 
@@ -751,6 +753,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $type = isset( $_POST['lead_type'] ) ? sanitize_key( wp_unslash( $_POST['lead_type'] ) ) : '';
             $label = isset( $_POST['label'] ) ? sanitize_text_field( wp_unslash( $_POST['label'] ) ) : '';
             $url = isset( $_POST['url'] ) ? esc_url_raw( wp_unslash( $_POST['url'] ) ) : '';
+            $page_title = isset( $_POST['page_title'] ) ? sanitize_text_field( wp_unslash( $_POST['page_title'] ) ) : '';
             $manual_test = ! empty( $_POST['is_test'] );
 
             $allowed_types = array( 'phone', 'whatsapp', 'email', 'form_submit' );
@@ -781,14 +784,14 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             if ( ! empty( $settings['enable_logging'] ) ) {
                 $log_entry = array(
                     'id'        => wp_generate_uuid4(),
-                    'time'      => current_time( 'mysql' ),
+                    'time'      => wp_date( 'Y-m-d H:i:s' ),
                     'type'      => $type,
                     'label'     => $label,
-                    'page_url'  => $url,
-                    'ip_hash'   => $this->get_request_ip_hash( $ip ),
-                    'ip'        => $ip,
-                    'user_id'   => $user_id,
-                    'is_test'   => $is_test ? 1 : 0,
+                    'page_url'   => $url,
+                    'page_title'  => $page_title,
+                    'ip_hash'    => $this->get_request_ip_hash( $ip ),
+                    'ip'         => $ip,
+                    'is_test'    => $is_test ? 1 : 0,
                     'browser'   => $ua_data['browser'],
                     'device'    => $ua_data['device'],
                     'country_code' => $country['code'],
@@ -991,7 +994,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                     'update_available' => $update_available,
                     'latest_version'   => $info['version'],
                     'current_version'  => $installed,
-                    'last_checked'     => current_time( 'mysql' ),
+                    'last_checked'     => wp_date( 'Y-m-d H:i:s' ),
                 )
             );
         }
@@ -1294,7 +1297,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                         $av = isset( $a[ $orderby ] ) ? $a[ $orderby ] : '';
                         $bv = isset( $b[ $orderby ] ) ? $b[ $orderby ] : '';
 
-                        if ( 'user_id' === $orderby || 'is_test' === $orderby ) {
+                        if ( 'is_test' === $orderby ) {
                             $cmp = (int) $av <=> (int) $bv;
                         } else {
                             $cmp = strnatcasecmp( (string) $av, (string) $bv );
@@ -1682,8 +1685,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                     <th><a href="<?php echo esc_url( $build_sort( 'device' ) ); ?>"><?php esc_html_e( 'Device', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'country_name' ) ); ?>"><?php esc_html_e( 'Country', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'label' ) ); ?>"><?php esc_html_e( 'Label', 'brn-lead-count' ); ?></a></th>
-                                    <th><a href="<?php echo esc_url( $build_sort( 'page_url' ) ); ?>"><?php esc_html_e( 'Page URL', 'brn-lead-count' ); ?></a></th>
-                                    <th><a href="<?php echo esc_url( $build_sort( 'user_id' ) ); ?>"><?php esc_html_e( 'User ID', 'brn-lead-count' ); ?></a></th>
+                                    <th><a href="<?php echo esc_url( $build_sort( 'page_title' ) ); ?>"><?php esc_html_e( 'Page', 'brn-lead-count' ); ?></a></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1718,8 +1720,17 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                             <?php echo esc_html( $country_name ); ?>
                                         </td>
                                         <td><?php echo esc_html( isset( $log['label'] ) ? (string) $log['label'] : '' ); ?></td>
-                                        <td style="word-break:break-all;"><?php echo esc_html( isset( $log['page_url'] ) ? (string) $log['page_url'] : '' ); ?></td>
-                                        <td><?php echo esc_html( isset( $log['user_id'] ) ? (string) $log['user_id'] : '0' ); ?></td>
+                                        <td>
+                                            <?php
+                                            $pg_url   = isset( $log['page_url'] ) ? (string) $log['page_url'] : '';
+                                            $pg_title = isset( $log['page_title'] ) && '' !== $log['page_title'] ? (string) $log['page_title'] : $pg_url;
+                                            if ( '' !== $pg_url ) :
+                                            ?>
+                                                <a href="<?php echo esc_url( $pg_url ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html( $pg_title ); ?></a>
+                                            <?php else : ?>
+                                                <?php echo esc_html( $pg_title ); ?>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             </tbody>
