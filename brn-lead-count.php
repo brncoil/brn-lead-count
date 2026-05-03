@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.3.0
+ * Version: 1.3.1
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -731,7 +731,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.3.0',
+                '1.3.1',
                 true
             );
 
@@ -988,6 +988,43 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             $update_available = version_compare( $installed, $info['version'], '<' );
+
+            // Keep WP's plugin update transient in sync so the Plugins screen reflects manual checks immediately.
+            $plugin_file = plugin_basename( __FILE__ );
+            $transient   = get_site_transient( 'update_plugins' );
+            if ( ! is_object( $transient ) ) {
+                $transient = new stdClass();
+            }
+            if ( ! isset( $transient->response ) || ! is_array( $transient->response ) ) {
+                $transient->response = array();
+            }
+            if ( ! isset( $transient->no_update ) || ! is_array( $transient->no_update ) ) {
+                $transient->no_update = array();
+            }
+            if ( ! isset( $transient->checked ) || ! is_array( $transient->checked ) ) {
+                $transient->checked = array();
+            }
+
+            $update_item              = new stdClass();
+            $update_item->id          = $plugin_file;
+            $update_item->slug        = dirname( $plugin_file );
+            $update_item->plugin      = $plugin_file;
+            $update_item->new_version = $info['version'];
+            $update_item->url         = 'https://github.com/brncoil/brn-lead-count';
+            $update_item->package     = $info['download_url'];
+
+            $transient->checked[ $plugin_file ] = $installed;
+            $transient->last_checked             = time();
+
+            if ( $update_available ) {
+                $transient->response[ $plugin_file ] = $update_item;
+                unset( $transient->no_update[ $plugin_file ] );
+            } else {
+                $transient->no_update[ $plugin_file ] = $update_item;
+                unset( $transient->response[ $plugin_file ] );
+            }
+
+            set_site_transient( 'update_plugins', $transient );
 
             wp_send_json_success(
                 array(
@@ -1843,6 +1880,11 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 $last_error      = get_option( BRN_Updater::OPT_LAST_ERROR, '' );
                 $latest_version  = ( $cached_info && isset( $cached_info['version'] ) ) ? $cached_info['version'] : '';
                 $update_avail    = $latest_version && version_compare( $current_version, $latest_version, '<' );
+                $plugin_file     = plugin_basename( __FILE__ );
+                $update_url      = wp_nonce_url(
+                    self_admin_url( 'update.php?action=upgrade-plugin&plugin=' . rawurlencode( $plugin_file ) ),
+                    'upgrade-plugin_' . $plugin_file
+                );
                 ?>
 
                 <h2 style="margin-top:32px;"><?php esc_html_e( 'Plugin Updates', 'brn-lead-count' ); ?></h2>
@@ -1882,16 +1924,19 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
                 <?php if ( $update_avail ) : ?>
                     <p>
-                        <a href="<?php echo esc_url( network_admin_url( 'plugins.php?plugin_status=upgrade' ) ); ?>" class="button button-primary">
+                        <a href="<?php echo esc_url( $update_url ); ?>" class="button button-primary">
                             <?php
                             printf(
                                 /* translators: %s = new version number */
-                                esc_html__( 'Go to Plugins screen to install v%s', 'brn-lead-count' ),
+                                esc_html__( 'Update now to v%s', 'brn-lead-count' ),
                                 esc_html( $latest_version )
                             );
                             ?>
                         </a>
                         &nbsp;
+                        <a href="<?php echo esc_url( self_admin_url( 'plugins.php' ) ); ?>" class="button">
+                            <?php esc_html_e( 'Open Plugins screen', 'brn-lead-count' ); ?>
+                        </a>
                     </p>
                 <?php endif; ?>
 
