@@ -92,6 +92,11 @@
             return;
         }
 
+        // Skip Elementor forms — they submit via AJAX and are handled separately below.
+        if (form.classList.contains('elementor-form')) {
+            return;
+        }
+
         var action = (form.getAttribute('action') || '').trim();
         var id = (form.getAttribute('id') || '').trim();
         var name = (form.getAttribute('name') || '').trim();
@@ -109,4 +114,49 @@
 
         sendLead('form_submit', labelParts.join(' | '));
     }, true);
+
+    // Elementor Pro forms: submitted and validated via AJAX.
+    // Elementor fires 'submit_success' on the form element after a successful server response.
+    document.addEventListener('submit_success', function (event) {
+        var form = event.target;
+        if (!form) {
+            return;
+        }
+
+        var id = (form.getAttribute('id') || '').trim();
+        var formName = '';
+        var nameEl = form.querySelector('[name="form_name"]');
+        if (nameEl) {
+            formName = (nameEl.value || '').trim();
+        }
+
+        var labelParts = ['elementor'];
+        if (formName) {
+            labelParts.push(formName);
+        }
+        if (id) {
+            labelParts.push('id:' + id);
+        }
+
+        sendLead('form_submit', labelParts.join(' | '));
+    }, true);
+
+    // Elementor also triggers a jQuery event on window: elementor/forms/submit_success
+    if (typeof window.jQuery !== 'undefined') {
+        window.jQuery(document).on('submit_success.elementor-forms', function (event, response) {
+            var formName = '';
+            try {
+                if (response && response.data && response.data.form_name) {
+                    formName = String(response.data.form_name);
+                }
+            } catch (e) {}
+
+            var labelParts = ['elementor'];
+            if (formName) {
+                labelParts.push(formName);
+            }
+
+            sendLead('form_submit', labelParts.join(' | '));
+        });
+    }
 })();
