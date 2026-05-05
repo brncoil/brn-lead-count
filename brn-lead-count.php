@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.3.7
+ * Version: 1.3.8
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -803,7 +803,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.3.7',
+                '1.3.8',
                 true
             );
 
@@ -818,7 +818,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         public function track_event() {
-            $request        = wp_unslash( $_REQUEST );
+            $request        = wp_unslash( $_POST );
             $supplied_token = isset( $request['nonce'] ) ? sanitize_text_field( $request['nonce'] ) : '';
             $stored_token   = $this->get_tracking_token();
 
@@ -827,11 +827,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return;
             }
 
-
-            $type = isset( $request['lead_type'] ) ? sanitize_key( $request['lead_type'] ) : '';
-            $label = isset( $request['label'] ) ? sanitize_text_field( $request['label'] ) : '';
-            $url = isset( $request['url'] ) ? esc_url_raw( $request['url'] ) : '';
-            $page_title = isset( $request['page_title'] ) ? sanitize_text_field( $request['page_title'] ) : '';
+            $type        = isset( $request['lead_type'] ) ? sanitize_key( $request['lead_type'] ) : '';
+            $label       = isset( $request['label'] ) ? sanitize_text_field( $request['label'] ) : '';
+            $url         = isset( $request['url'] ) ? esc_url_raw( $request['url'] ) : '';
+            $page_title  = isset( $request['page_title'] ) ? sanitize_text_field( $request['page_title'] ) : '';
             $manual_test = ! empty( $request['is_test'] );
 
             $allowed_types = array( 'phone', 'whatsapp', 'email', 'form_submit' );

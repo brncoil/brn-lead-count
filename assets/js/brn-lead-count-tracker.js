@@ -6,15 +6,16 @@
     }
 
     var endpoint = brnLeadCountData.ajaxUrl;
-    var nonce = brnLeadCountData.nonce;
+    var nonce    = brnLeadCountData.nonce;
+
+    // Deduplicate: ignore a second event for the same lead within 2 seconds.
     var recentLeadKeys = {};
-    var pendingImages = [];
 
     function shouldSkipDuplicate(leadType, label) {
         var key = leadType + '|' + (label || '');
         var now = Date.now();
 
-        if (recentLeadKeys[key] && now - recentLeadKeys[key] < 1500) {
+        if (recentLeadKeys[key] && now - recentLeadKeys[key] < 2000) {
             return true;
         }
 
@@ -22,92 +23,92 @@
         return false;
     }
 
-    function releasePendingImage(image) {
-        var index = pendingImages.indexOf(image);
-        if (index !== -1) {
-            pendingImages.splice(index, 1);
+    // Build URL-encoded body without relying on URLSearchParams (broadest compatibility).
+    function buildBody(leadType, label) {
+        var fields = {
+            action:     'brn_lead_count_track',
+            nonce:      nonce,
+            lead_type:  leadType,
+            label:      label || '',
+            url:        window.location.href,
+            page_title: document.title || ''
+        };
+
+        var parts = [];
+        for (var k in fields) {
+            if (Object.prototype.hasOwnProperty.call(fields, k)) {
+                parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(fields[k]));
+            }
         }
+
+        return parts.join('&');
     }
 
-    function getEventTarget(event) {
-        var target = event.target;
-
-        if (target && target.nodeType === 3) {
-            target = target.parentNode;
-        }
-
-        if (!target || typeof target.closest !== 'function') {
-            return null;
-        }
-
-        return target;
-    }
-
-    function sendLead(leadType, label, options) {
-        options = options || {};
-
+    function sendLead(leadType, label) {
         if (shouldSkipDuplicate(leadType, label)) {
             return;
         }
 
-        var data = new URLSearchParams();
-        data.append('action', 'brn_lead_count_track');
-        data.append('nonce', nonce);
-        data.append('lead_type', leadType);
-        data.append('label', label || '');
-        data.append('url', window.location.href);
-        data.append('page_title', document.title || '');
+        var body = buildBody(leadType, label);
 
-        if (options.allowGetFallback) {
-            var img = new Image();
-            pendingImages.push(img);
-            img.onload = function () {
-                releasePendingImage(img);
-            };
-            img.onerror = function () {
-                releasePendingImage(img);
-            };
-            img.src = endpoint + '?' + data.toString() + '&transport=get&_=' + Date.now();
+        // 1. sendBeacon: designed to survive page navigation (dialer open, WhatsApp handoff).
+        if (typeof navigator.sendBeacon === 'function') {
+            try {
+                var blob = new Blob([body], { type: 'application/x-www-form-urlencoded; charset=UTF-8' });
+                if (navigator.sendBeacon(endpoint, blob)) {
+                    return;
+                }
+            } catch (e) {}
         }
 
-        if (navigator.sendBeacon && options.useBeacon !== false) {
-            var blob = new Blob([data.toString()], {
-                type: 'application/x-www-form-urlencoded; charset=UTF-8'
-            });
-            if (navigator.sendBeacon(endpoint, blob)) {
+        // 2. fetch with keepalive: works on modern browsers, survives short unloads.
+        if (typeof fetch === 'function') {
+            try {
+                fetch(endpoint, {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                    body:    body,
+                    keepalive: true
+                }).catch(function () {});
                 return;
-            }
+            } catch (e) {}
         }
 
-        fetch(endpoint, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
-            },
-            body: data.toString(),
-            keepalive: true
-        }).catch(function () {
-            // Ignore network failures to avoid blocking user actions.
-        });
+        // 3. XHR: universal fallback.
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', endpoint, true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
+            xhr.send(body);
+        } catch (e) {}
     }
 
-    function getTextContent(el) {
-        if (!el) {
-            return '';
-        }
+    // -----------------------------------------------------------------------
+    // Link clicks: tel:, mailto:, WhatsApp
+    // Only 'click' is used — pointerdown/touchstart also fire during scrolling,
+    // which causes false leads. 'click' fires only on a confirmed tap.
+    // -----------------------------------------------------------------------
 
+    function getTextContent(el) {
         var text = (el.getAttribute('aria-label') || el.textContent || '').trim();
         if (!text) {
             text = el.getAttribute('href') || '';
         }
-
         return text.substring(0, 180);
     }
 
-    function handleTrackedLink(event) {
-        var target = getEventTarget(event);
+    document.addEventListener('click', function (event) {
+        var target = event.target;
         if (!target) {
+            return;
+        }
+
+        // Walk up from text nodes.
+        if (target.nodeType === 3) {
+            target = target.parentNode;
+        }
+
+        if (!target || typeof target.closest !== 'function') {
             return;
         }
 
@@ -121,33 +122,34 @@
             return;
         }
 
-        var normalized = href.toLowerCase();
+        var lower = href.toLowerCase();
 
-        if (normalized.indexOf('tel:') === 0) {
-            sendLead('phone', getTextContent(link), { allowGetFallback: true });
+        if (lower.indexOf('tel:') === 0) {
+            sendLead('phone', getTextContent(link));
             return;
         }
 
-        if (normalized.indexOf('mailto:') === 0) {
-            sendLead('email', getTextContent(link), { allowGetFallback: true });
+        if (lower.indexOf('mailto:') === 0) {
+            sendLead('email', getTextContent(link));
             return;
         }
 
-        var isWhatsapp = normalized.indexOf('whatsapp://') === 0 ||
-            normalized.indexOf('https://wa.me/') === 0 ||
-            normalized.indexOf('http://wa.me/') === 0 ||
-            normalized.indexOf('https://api.whatsapp.com/') === 0 ||
-            normalized.indexOf('http://api.whatsapp.com/') === 0 ||
-            normalized.indexOf('whatsapp.com/') > -1;
+        var isWhatsapp =
+            lower.indexOf('whatsapp://') === 0 ||
+            lower.indexOf('https://wa.me/') === 0 ||
+            lower.indexOf('http://wa.me/') === 0 ||
+            lower.indexOf('https://api.whatsapp.com/') === 0 ||
+            lower.indexOf('http://api.whatsapp.com/') === 0 ||
+            lower.indexOf('whatsapp.com/') > -1;
 
         if (isWhatsapp) {
-            sendLead('whatsapp', getTextContent(link), { allowGetFallback: true });
+            sendLead('whatsapp', getTextContent(link));
         }
-    }
+    }, true);
 
-    document.addEventListener('pointerdown', handleTrackedLink, true);
-    document.addEventListener('touchstart', handleTrackedLink, true);
-    document.addEventListener('click', handleTrackedLink, true);
+    // -----------------------------------------------------------------------
+    // Native form submissions (not Elementor).
+    // -----------------------------------------------------------------------
 
     document.addEventListener('submit', function (event) {
         var form = event.target;
@@ -155,56 +157,46 @@
             return;
         }
 
-        // Skip Elementor forms — they submit via AJAX and are handled separately below.
-        if (form.classList.contains('elementor-form')) {
+        // Skip Elementor forms — handled separately below.
+        if (form.classList && form.classList.contains('elementor-form')) {
             return;
         }
 
+        var parts  = [];
+        var id     = (form.getAttribute('id') || '').trim();
+        var name   = (form.getAttribute('name') || '').trim();
         var action = (form.getAttribute('action') || '').trim();
-        var id = (form.getAttribute('id') || '').trim();
-        var name = (form.getAttribute('name') || '').trim();
 
-        var labelParts = [];
-        if (id) {
-            labelParts.push('id:' + id);
-        }
-        if (name) {
-            labelParts.push('name:' + name);
-        }
-        if (action) {
-            labelParts.push('action:' + action.substring(0, 120));
-        }
+        if (id)     { parts.push('id:' + id); }
+        if (name)   { parts.push('name:' + name); }
+        if (action) { parts.push('action:' + action.substring(0, 80)); }
 
-        sendLead('form_submit', labelParts.join(' | '));
+        sendLead('form_submit', parts.join(' | '));
     }, true);
 
-    // Elementor Pro forms: submitted and validated via AJAX.
-    // Elementor fires 'submit_success' on the form element after a successful server response.
+    // -----------------------------------------------------------------------
+    // Elementor Pro forms — submit via AJAX, no native submit event fires.
+    // Elementor dispatches a custom 'submit_success' event on the form element.
+    // -----------------------------------------------------------------------
+
     document.addEventListener('submit_success', function (event) {
         var form = event.target;
         if (!form) {
             return;
         }
 
-        var id = (form.getAttribute('id') || '').trim();
-        var formName = '';
-        var nameEl = form.querySelector('[name="form_name"]');
-        if (nameEl) {
-            formName = (nameEl.value || '').trim();
-        }
+        var parts    = ['elementor'];
+        var nameEl   = form.querySelector('[name="form_name"]');
+        var formName = nameEl ? (nameEl.value || '').trim() : '';
+        var id       = (form.getAttribute('id') || '').trim();
 
-        var labelParts = ['elementor'];
-        if (formName) {
-            labelParts.push(formName);
-        }
-        if (id) {
-            labelParts.push('id:' + id);
-        }
+        if (formName) { parts.push(formName); }
+        if (id)       { parts.push('id:' + id); }
 
-        sendLead('form_submit', labelParts.join(' | '));
+        sendLead('form_submit', parts.join(' | '));
     }, true);
 
-    // Elementor also triggers a jQuery event on window: elementor/forms/submit_success
+    // jQuery trigger fallback (older Elementor versions).
     if (typeof window.jQuery !== 'undefined') {
         window.jQuery(document).on('submit_success.elementor-forms', function (event, response) {
             var formName = '';
@@ -214,12 +206,10 @@
                 }
             } catch (e) {}
 
-            var labelParts = ['elementor'];
-            if (formName) {
-                labelParts.push(formName);
-            }
-
-            sendLead('form_submit', labelParts.join(' | '));
+            var parts = ['elementor'];
+            if (formName) { parts.push(formName); }
+            sendLead('form_submit', parts.join(' | '));
         });
     }
+
 })();
