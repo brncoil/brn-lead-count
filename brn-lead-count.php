@@ -890,7 +890,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // ==== SECTION 4 – Recommendations (optional) ====
             if ( ! empty( $settings['enable_recommendations'] ) ) {
-                $recs = $this->build_recommendations( $report );
+                $recs = $this->build_recommendations( $report, $is_hebrew );
                 if ( ! empty( $recs ) ) {
                     $html .= '<div style="background:#fffbea;border:1px solid #f0d97a;border-radius:10px;padding:14px 16px;margin-bottom:16px;">';
                     $html .= '<div style="font-size:13px;font-weight:600;color:#7a5c00;margin-bottom:8px;">&#128161; ' . esc_html( $lbl_reco_section ) . '</div>';
@@ -915,7 +915,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
          * @param array $report
          * @return string[]
          */
-        private function build_recommendations( $report ) {
+        private function build_recommendations( $report, $is_hebrew = false ) {
             $recs = array();
 
             $mtd     = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
@@ -933,16 +933,17 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             if ( $pmt_total > 0 ) {
                 $drop_pct = ( ( $pmt_total - $mtd_total ) / $pmt_total ) * 100;
                 if ( $drop_pct >= 20 ) {
-                    $recs[] = sprintf(
-                        'Total leads are down %.0f%% vs last month — consider reviewing your campaign budget or messaging.',
-                        $drop_pct
-                    );
+                    $recs[] = $is_hebrew
+                        ? sprintf( 'סה"כ הלידים ירד ב-%.0f%% לעומת החודש הקודם — מומלץ לבדוק את תקציב הקמפיין והמסרים.', $drop_pct )
+                        : sprintf( 'Total leads are down %.0f%% vs last month — consider reviewing your campaign budget or messaging.', $drop_pct );
                 }
             }
 
             // 2. No leads this month at all.
             if ( 0 === $mtd_total ) {
-                $recs[] = 'No leads recorded this month — verify the tracking script is active on all landing pages.';
+                $recs[] = $is_hebrew
+                    ? 'לא נרשמו לידים החודש — ודא שסקריפט המעקב פעיל בכל דפי הנחיתה.'
+                    : 'No leads recorded this month — verify the tracking script is active on all landing pages.';
                 return $recs; // Most other rules won't add value; return early.
             }
 
@@ -958,9 +959,11 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $top_type     = key( $type_counts );
             $top_type_val = current( $type_counts );
             if ( 'whatsapp' === $top_type && $top_type_val > 0 ) {
-                $prev_wa  = $n( $pmt, 'whatsapp' );
+                $prev_wa = $n( $pmt, 'whatsapp' );
                 if ( $top_type_val > $prev_wa ) {
-                    $recs[] = 'WhatsApp is your fastest-growing channel — add more WhatsApp CTA buttons to key pages to capitalise on the trend.';
+                    $recs[] = $is_hebrew
+                        ? 'וואטסאפ הוא הערוץ הצומח ביותר שלך — הוסף כפתורי WhatsApp בולטים לדפים המרכזיים כדי לנצל את המגמה.'
+                        : 'WhatsApp is your fastest-growing channel — add more WhatsApp CTA buttons to key pages to capitalise on the trend.';
                 }
             }
 
@@ -968,23 +971,31 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             if ( ! empty( $sources ) && $mtd_total > 0 ) {
                 $direct_mtd = isset( $sources['direct']['mtd'] ) ? (int) $sources['direct']['mtd'] : 0;
                 if ( ( $direct_mtd / $mtd_total ) >= 0.70 ) {
-                    $recs[] = 'Over 70% of your leads have no tracked source (Direct) — add UTM parameters to your campaigns to identify which channels are working.';
+                    $recs[] = $is_hebrew
+                        ? 'מעל 70% מהלידים מגיעים ממקור לא מזוהה (ישיר) — הוסף פרמטרי UTM לקמפיינים שלך כדי לדעת אילו ערוצים עובדים.'
+                        : 'Over 70% of your leads have no tracked source (Direct) — add UTM parameters to your campaigns to identify which channels are working.';
                 }
             }
 
             // 5. No form submissions but other leads exist.
             if ( 0 === $n( $mtd, 'form_submit' ) && ( $n( $mtd, 'phone' ) > 0 || $n( $mtd, 'whatsapp' ) > 0 ) ) {
-                $recs[] = 'No form submissions this month — consider adding a prominent contact form, or check that Elementor form events are being tracked.';
+                $recs[] = $is_hebrew
+                    ? 'אין הגשות טופס החודש — שקול להוסיף טופס יצירת קשר בולט, או בדוק שאירועי טפסי Elementor נרשמים כראוי.'
+                    : 'No form submissions this month — consider adding a prominent contact form, or check that Elementor form events are being tracked.';
             }
 
             // 6. No email link clicks.
             if ( 0 === $n( $mtd, 'email' ) ) {
-                $recs[] = 'No email link clicks tracked this month — ensure mailto: links use a standard href="mailto:…" format and are visible on key pages.';
+                $recs[] = $is_hebrew
+                    ? 'לא נרשמו לחיצות על קישורי אימייל החודש — ודא שקישורי mailto: משתמשים בתבנית href="mailto:…" תקנית ונראים בדפים מרכזיים.'
+                    : 'No email link clicks tracked this month — ensure mailto: links use a standard href="mailto:…" format and are visible on key pages.';
             }
 
             // 7. Only one source.
             if ( 1 === count( $sources ) ) {
-                $recs[] = 'All your leads are coming from a single traffic source — diversifying channels will reduce risk and open new growth opportunities.';
+                $recs[] = $is_hebrew
+                    ? 'כל הלידים שלך מגיעים ממקור תנועה אחד — פיזור הערוצים יפחית סיכון ויפתח הזדמנויות צמיחה חדשות.'
+                    : 'All your leads are coming from a single traffic source — diversifying channels will reduce risk and open new growth opportunities.';
             }
 
             return $recs;
