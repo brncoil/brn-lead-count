@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.3.8
+ * Version: 1.3.9
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -71,6 +71,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // Load Chart.js on our admin page only.
             add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_scripts' ) );
+
+            // REST API endpoint — more reliable than admin-ajax.php on cached/proxied hosts (e.g. WP Engine).
+            add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
         }
 
         /**
@@ -794,6 +797,51 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             return (bool) $sent;
         }
 
+        /**
+         * Register REST API tracking endpoint.
+         * /wp-json/brn/v1/track  — accepts unauthenticated POST.
+         */
+        public function register_rest_routes() {
+            register_rest_route(
+                'brn/v1',
+                '/track',
+                array(
+                    'methods'             => 'POST',
+                    'callback'            => array( $this, 'rest_track_event' ),
+                    'permission_callback' => '__return_true',
+                )
+            );
+        }
+
+        /**
+         * REST API handler — validates static token then records the lead.
+         *
+         * @param \WP_REST_Request $req
+         * @return \WP_REST_Response
+         */
+        public function rest_track_event( $req ) {
+            $supplied_token = sanitize_text_field( (string) $req->get_param( 'nonce' ) );
+            $stored_token   = $this->get_tracking_token();
+
+            if ( '' === $supplied_token || ! hash_equals( $stored_token, $supplied_token ) ) {
+                return new \WP_REST_Response( array( 'success' => false, 'message' => 'Invalid token.' ), 403 );
+            }
+
+            $type        = sanitize_key( (string) $req->get_param( 'lead_type' ) );
+            $label       = sanitize_text_field( (string) $req->get_param( 'label' ) );
+            $url         = esc_url_raw( (string) $req->get_param( 'url' ) );
+            $page_title  = sanitize_text_field( (string) $req->get_param( 'page_title' ) );
+            $manual_test = (bool) $req->get_param( 'is_test' );
+
+            $counts = $this->process_track( $type, $label, $url, $page_title, $manual_test );
+
+            if ( null === $counts ) {
+                return new \WP_REST_Response( array( 'success' => false, 'message' => 'Invalid lead type.' ), 400 );
+            }
+
+            return new \WP_REST_Response( array( 'success' => true, 'counts' => $counts ), 200 );
+        }
+
         public function enqueue_scripts() {
             if ( is_admin() ) {
                 return;
@@ -803,7 +851,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.3.8',
+                '1.3.9',
                 true
             );
 
@@ -811,7 +859,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 'brnLeadCountData',
                 array(
-                    'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+                    'restUrl' => rest_url( 'brn/v1/track' ),
                     'nonce'   => $this->get_tracking_token(),
                 )
             );
@@ -833,9 +881,31 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $page_title  = isset( $request['page_title'] ) ? sanitize_text_field( $request['page_title'] ) : '';
             $manual_test = ! empty( $request['is_test'] );
 
+            $counts = $this->process_track( $type, $label, $url, $page_title, $manual_test );
+
+            if ( null === $counts ) {
+                wp_send_json_error( array( 'message' => 'Invalid lead type.' ), 400 );
+                return;
+            }
+
+            wp_send_json_success( array( 'counts' => $counts ) );
+        }
+
+        /**
+         * Core tracking logic shared by admin-ajax and REST handlers.
+         * Returns counts array on success, null if lead type is invalid.
+         *
+         * @param string $type
+         * @param string $label
+         * @param string $url
+         * @param string $page_title
+         * @param bool   $manual_test
+         * @return array|null
+         */
+        private function process_track( $type, $label, $url, $page_title, $manual_test ) {
             $allowed_types = array( 'phone', 'whatsapp', 'email', 'form_submit' );
             if ( ! in_array( $type, $allowed_types, true ) ) {
-                wp_send_json_error( array( 'message' => 'Invalid lead type.' ), 400 );
+                return null;
             }
 
             $stats = get_option( self::OPTION_STATS, $this->get_empty_stats() );
@@ -852,7 +922,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $ua_data  = $this->parse_user_agent_data( $ua );
             $country  = $this->resolve_country_by_ip( $ip );
 
-            // Test leads must be excluded from totals and all reports.
             if ( ! $is_test ) {
                 $stats['counts'][ $type ] += 1;
                 $stats['counts']['total'] += 1;
@@ -860,17 +929,17 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             if ( ! empty( $settings['enable_logging'] ) ) {
                 $log_entry = array(
-                    'id'        => wp_generate_uuid4(),
-                    'time'      => wp_date( 'Y-m-d H:i:s' ),
-                    'type'      => $type,
-                    'label'     => $label,
-                    'page_url'   => $url,
-                    'page_title'  => $page_title,
-                    'ip_hash'    => $this->get_request_ip_hash( $ip ),
-                    'ip'         => $ip,
-                    'is_test'    => $is_test ? 1 : 0,
-                    'browser'   => $ua_data['browser'],
-                    'device'    => $ua_data['device'],
+                    'id'           => wp_generate_uuid4(),
+                    'time'         => wp_date( 'Y-m-d H:i:s' ),
+                    'type'         => $type,
+                    'label'        => $label,
+                    'page_url'     => $url,
+                    'page_title'   => $page_title,
+                    'ip_hash'      => $this->get_request_ip_hash( $ip ),
+                    'ip'           => $ip,
+                    'is_test'      => $is_test ? 1 : 0,
+                    'browser'      => $ua_data['browser'],
+                    'device'       => $ua_data['device'],
                     'country_code' => $country['code'],
                     'country_name' => $country['name'],
                 );
@@ -887,11 +956,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             update_option( self::OPTION_STATS, $stats, false );
 
-            wp_send_json_success(
-                array(
-                    'counts' => $stats['counts'],
-                )
-            );
+            return $stats['counts'];
         }
 
         private function get_request_ip() {

@@ -1,11 +1,11 @@
 (function () {
     'use strict';
 
-    if (typeof brnLeadCountData === 'undefined' || !brnLeadCountData.ajaxUrl || !brnLeadCountData.nonce) {
+    if (typeof brnLeadCountData === 'undefined' || !brnLeadCountData.restUrl || !brnLeadCountData.nonce) {
         return;
     }
 
-    var endpoint = brnLeadCountData.ajaxUrl;
+    var endpoint = brnLeadCountData.restUrl;
     var nonce    = brnLeadCountData.nonce;
 
     // Deduplicate: ignore a second event for the same lead within 2 seconds.
@@ -26,7 +26,6 @@
     // Build URL-encoded body without relying on URLSearchParams (broadest compatibility).
     function buildBody(leadType, label) {
         var fields = {
-            action:     'brn_lead_count_track',
             nonce:      nonce,
             lead_type:  leadType,
             label:      label || '',
