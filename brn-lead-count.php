@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -851,7 +851,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.4.0',
+                '1.4.1',
                 true
             );
 
@@ -863,6 +863,21 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                     'nonce'   => $this->get_tracking_token(),
                 )
             );
+
+            // Prevent caching/optimization plugins (NitroPack, Cloudflare, WP Rocket, etc.)
+            // from deferring or delaying this script — it must run immediately on page load.
+            add_filter( 'script_loader_tag', array( $this, 'add_tracker_no_defer_attrs' ), 10, 2 );
+        }
+
+        public function add_tracker_no_defer_attrs( $tag, $handle ) {
+            if ( 'brn-lead-count-tracker' !== $handle ) {
+                return $tag;
+            }
+            // data-nitro-exclude  → NitroPack
+            // data-cfasync="false" → Cloudflare Rocket Loader
+            // data-no-defer       → WP Rocket / generic
+            $tag = str_replace( ' src=', ' data-nitro-exclude="1" data-cfasync="false" data-no-defer="1" src=', $tag );
+            return $tag;
         }
 
         public function track_event() {
@@ -1098,7 +1113,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.4.0';
+            $plugin_ver   = '1.4.1';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
