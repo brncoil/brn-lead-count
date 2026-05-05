@@ -21,8 +21,9 @@
             var blob = new Blob([data.toString()], {
                 type: 'application/x-www-form-urlencoded; charset=UTF-8'
             });
-            navigator.sendBeacon(endpoint, blob);
-            return;
+            if (navigator.sendBeacon(endpoint, blob)) {
+                return;
+            }
         }
 
         fetch(endpoint, {
@@ -52,7 +53,12 @@
     }
 
     document.addEventListener('click', function (event) {
-        var link = event.target.closest('a[href]');
+        var target = event.target;
+        if (!target || typeof target.closest !== 'function') {
+            return;
+        }
+
+        var link = target.closest('a[href]');
         if (!link) {
             return;
         }
