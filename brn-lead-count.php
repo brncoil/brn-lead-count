@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.4.1
+ * Version: 1.4.2
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -147,6 +147,12 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 if ( ! isset( $log['is_test'] ) ) {
                     $log['is_test'] = 0;
                     $changed        = true;
+                }
+
+                if ( ! isset( $log['source'] ) || '' === (string) $log['source'] ) {
+                    $page_url      = isset( $log['page_url'] ) ? (string) $log['page_url'] : '';
+                    $log['source'] = $this->normalize_source( $this->derive_source_from_url( $page_url ) );
+                    $changed       = true;
                 }
             }
             unset( $log );
@@ -520,6 +526,101 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
+         * Build source totals for a given time window.
+         *
+         * @param array $logs
+         * @param int   $start_ts
+         * @param int   $end_ts
+         * @return array
+         */
+        private function get_window_source_counts( $logs, $start_ts, $end_ts ) {
+            $source_counts = array();
+            $tz            = wp_timezone();
+
+            foreach ( $logs as $log ) {
+                if ( ! is_array( $log ) || empty( $log['time'] ) || ! empty( $log['is_test'] ) ) {
+                    continue;
+                }
+
+                $dt = DateTimeImmutable::createFromFormat( 'Y-m-d H:i:s', (string) $log['time'], $tz );
+                $ts = $dt ? $dt->getTimestamp() : false;
+                if ( false === $ts || $ts < $start_ts || $ts > $end_ts ) {
+                    continue;
+                }
+
+                $source = isset( $log['source'] ) ? (string) $log['source'] : '';
+                $source = $this->normalize_source( $source );
+                if ( ! isset( $source_counts[ $source ] ) ) {
+                    $source_counts[ $source ] = 0;
+                }
+                $source_counts[ $source ]++;
+            }
+
+            arsort( $source_counts );
+
+            return $source_counts;
+        }
+
+        /**
+         * Resolve source from URL query params.
+         *
+         * @param string $url
+         * @return string
+         */
+        private function derive_source_from_url( $url ) {
+            $url = (string) $url;
+            if ( '' === $url ) {
+                return 'direct';
+            }
+
+            $query = wp_parse_url( $url, PHP_URL_QUERY );
+            if ( ! empty( $query ) ) {
+                parse_str( (string) $query, $params );
+                foreach ( array( 'utm_source', 'source', 'src', 'ref' ) as $key ) {
+                    if ( ! empty( $params[ $key ] ) ) {
+                        return (string) $params[ $key ];
+                    }
+                }
+            }
+
+            return 'direct';
+        }
+
+        /**
+         * Normalize source string for storage.
+         *
+         * @param string $source
+         * @return string
+         */
+        private function normalize_source( $source ) {
+            $source = strtolower( trim( (string) $source ) );
+            $source = preg_replace( '/\s+/', '-', $source );
+            $source = preg_replace( '/[^a-z0-9_\-.]/', '', (string) $source );
+            $source = trim( (string) $source, '-.' );
+
+            if ( '' === $source ) {
+                return 'direct';
+            }
+
+            return substr( $source, 0, 80 );
+        }
+
+        /**
+         * Human label for source value.
+         *
+         * @param string $source
+         * @return string
+         */
+        private function source_label( $source ) {
+            $source = $this->normalize_source( $source );
+            if ( 'direct' === $source ) {
+                return __( 'Direct', 'brn-lead-count' );
+            }
+
+            return str_replace( '-', ' ', (string) $source );
+        }
+
+        /**
          * Build report payload with requested comparisons.
          *
          * @param int|null $reference_ts
@@ -551,6 +652,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'now_label' => wp_date( 'Y-m-d H:i', $now->getTimestamp() ),
                 'report_day_label' => wp_date( 'Y-m-d', $report_day_start->getTimestamp() ),
                 'report_day' => $this->get_window_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
+                'report_day_sources' => $this->get_window_source_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
                 'same_day_last_month' => $this->get_window_counts( $logs, $last_month_report_day_start->getTimestamp(), $last_month_report_day_end->getTimestamp() ),
                 'mtd_current' => $this->get_window_counts( $logs, $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
                 'same_month_last_year' => $this->get_window_counts( $logs, $last_year_same_month_start->getTimestamp(), $last_year_same_month_end->getTimestamp() ),
@@ -607,6 +709,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $last_day_label   = $is_hebrew ? 'סה"כ יום קודם' : 'Last Day Total';
             $mix_period_label = $is_hebrew ? 'תמהיל לידים לפי תקופה' : 'Lead Mix by Period';
             $breakdown_label  = $is_hebrew ? 'טלפון / וואטסאפ / אימייל / טופס' : 'Phone / WhatsApp / Email / Form';
+            $source_breakdown_label = $is_hebrew ? 'מקור לידים (יום קודם)' : 'Lead Sources (Last Day)';
             $mtd_label        = $is_hebrew ? 'מצטבר חודשי' : 'Month To Date';
             $mtd_compare_label = $is_hebrew ? 'השוואה לאותו חודש בשנה שעברה' : 'Compared against same month last year';
             $trend_last_day_vs_last_month = $is_hebrew ? 'יום קודם מול אותו יום בחודש שעבר' : 'Last day vs same day last month';
@@ -746,6 +849,26 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
             $html .= '</table>';
 
+            $html .= '<div style="margin-top:14px;font-size:14px;font-weight:600;color:#1a3252;">' . esc_html( $source_breakdown_label ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;font-size:12px;">';
+            $html .= '<tr>';
+            $html .= '<th style="text-align:left;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html__( 'Source', 'brn-lead-count' ) . '</th>';
+            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html__( 'Leads', 'brn-lead-count' ) . '</th>';
+            $html .= '</tr>';
+
+            $report_day_sources = isset( $report['report_day_sources'] ) && is_array( $report['report_day_sources'] ) ? $report['report_day_sources'] : array();
+            if ( empty( $report_day_sources ) ) {
+                $html .= '<tr><td colspan="2" style="padding:8px;color:#60758f;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
+            } else {
+                foreach ( $report_day_sources as $source_key => $source_total ) {
+                    $html .= '<tr>';
+                    $html .= '<td style="padding:8px;border-bottom:1px solid #f1f4f8;">' . esc_html( $this->source_label( (string) $source_key ) ) . '</td>';
+                    $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;font-weight:700;">' . esc_html( (string) (int) $source_total ) . '</td>';
+                    $html .= '</tr>';
+                }
+            }
+            $html .= '</table>';
+
             $html .= '<p style="margin:16px 0 0;font-size:13px;color:#5a6e86;">' . esc_html( $footer_message ) . '</p>';
             $html .= '</div></div></div>';
 
@@ -831,9 +954,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $label       = sanitize_text_field( (string) $req->get_param( 'label' ) );
             $url         = esc_url_raw( (string) $req->get_param( 'url' ) );
             $page_title  = sanitize_text_field( (string) $req->get_param( 'page_title' ) );
+            $source      = sanitize_text_field( (string) $req->get_param( 'source' ) );
             $manual_test = (bool) $req->get_param( 'is_test' );
 
-            $counts = $this->process_track( $type, $label, $url, $page_title, $manual_test );
+            $counts = $this->process_track( $type, $label, $url, $page_title, $source, $manual_test );
 
             if ( null === $counts ) {
                 return new \WP_REST_Response( array( 'success' => false, 'message' => 'Invalid lead type.' ), 400 );
@@ -851,7 +975,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.4.1',
+                '1.4.2',
                 true
             );
 
@@ -894,9 +1018,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $label       = isset( $request['label'] ) ? sanitize_text_field( $request['label'] ) : '';
             $url         = isset( $request['url'] ) ? esc_url_raw( $request['url'] ) : '';
             $page_title  = isset( $request['page_title'] ) ? sanitize_text_field( $request['page_title'] ) : '';
+            $source      = isset( $request['source'] ) ? sanitize_text_field( $request['source'] ) : '';
             $manual_test = ! empty( $request['is_test'] );
 
-            $counts = $this->process_track( $type, $label, $url, $page_title, $manual_test );
+            $counts = $this->process_track( $type, $label, $url, $page_title, $source, $manual_test );
 
             if ( null === $counts ) {
                 wp_send_json_error( array( 'message' => 'Invalid lead type.' ), 400 );
@@ -914,10 +1039,11 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
          * @param string $label
          * @param string $url
          * @param string $page_title
+         * @param string $source
          * @param bool   $manual_test
          * @return array|null
          */
-        private function process_track( $type, $label, $url, $page_title, $manual_test ) {
+        private function process_track( $type, $label, $url, $page_title, $source, $manual_test ) {
             $allowed_types = array( 'phone', 'whatsapp', 'email', 'form_submit' );
             if ( ! in_array( $type, $allowed_types, true ) ) {
                 return null;
@@ -936,6 +1062,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $ua       = isset( $_SERVER['HTTP_USER_AGENT'] ) ? sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ) : '';
             $ua_data  = $this->parse_user_agent_data( $ua );
             $country  = $this->resolve_country_by_ip( $ip );
+            $source   = $this->normalize_source( $source );
+            if ( '' === $source ) {
+                $source = $this->normalize_source( $this->derive_source_from_url( $url ) );
+            }
 
             if ( ! $is_test ) {
                 $stats['counts'][ $type ] += 1;
@@ -950,6 +1080,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                     'label'        => $label,
                     'page_url'     => $url,
                     'page_title'   => $page_title,
+                    'source'       => $source,
                     'ip_hash'      => $this->get_request_ip_hash( $ip ),
                     'ip'           => $ip,
                     'is_test'      => $is_test ? 1 : 0,
@@ -1113,7 +1244,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.4.1';
+            $plugin_ver   = '1.4.2';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
@@ -1356,6 +1487,42 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             return $by_date;
         }
 
+        /**
+         * Aggregates lead logs into per-date source totals.
+         * Returns: [ 'Y-m-d' => [ 'google'=>N, 'direct'=>N, ... ], ... ]
+         *
+         * @param array $logs
+         * @return array
+         */
+        private function build_source_analytics_data( array $logs ) {
+            $by_date = array();
+            foreach ( $logs as $log ) {
+                if ( ! is_array( $log ) || empty( $log['time'] ) ) {
+                    continue;
+                }
+
+                if ( ! empty( $log['is_test'] ) ) {
+                    continue;
+                }
+
+                $date   = substr( (string) $log['time'], 0, 10 );
+                $source = $this->normalize_source( isset( $log['source'] ) ? (string) $log['source'] : '' );
+
+                if ( ! isset( $by_date[ $date ] ) ) {
+                    $by_date[ $date ] = array();
+                }
+
+                if ( ! isset( $by_date[ $date ][ $source ] ) ) {
+                    $by_date[ $date ][ $source ] = 0;
+                }
+
+                $by_date[ $date ][ $source ]++;
+            }
+
+            ksort( $by_date );
+            return $by_date;
+        }
+
         // ΓöÇΓöÇ Settings ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ //
 
         public function sanitize_settings( $input ) {
@@ -1561,6 +1728,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                         ' ',
                                         array(
                                             isset( $log['label'] ) ? (string) $log['label'] : '',
+                                            isset( $log['source'] ) ? (string) $log['source'] : '',
                                             isset( $log['page_url'] ) ? (string) $log['page_url'] : '',
                                             isset( $log['type'] ) ? (string) $log['type'] : '',
                                             isset( $log['browser'] ) ? (string) $log['browser'] : '',
@@ -1644,8 +1812,11 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 <?php
                 // ΓöÇΓöÇ Analytics section ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ //
                 $analytics_data = $this->build_analytics_data( $logs );
+                $source_analytics_data = $this->build_source_analytics_data( $logs );
                 // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- wp_json_encode produces safe JSON
                 $analytics_json = wp_json_encode( $analytics_data );
+                // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- wp_json_encode produces safe JSON
+                $source_analytics_json = wp_json_encode( $source_analytics_data );
                 ?>
 
                 <h2 style="margin-top:32px;"><?php esc_html_e( 'Analytics', 'brn-lead-count' ); ?></h2>
@@ -1699,6 +1870,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                         </div>
                     </div>
 
+                    <h3 style="margin:0 0 8px;"><?php esc_html_e( 'Leads by Source', 'brn-lead-count' ); ?></h3>
+                    <div id="brn-source-cards" style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 20px;"></div>
+
                     <!-- Chart -->
                     <div style="max-width:960px;background:#fff;border:1px solid #c3c4c7;border-radius:4px;padding:16px;">
                         <p id="brn-chart-empty" style="display:none;color:#646970;text-align:center;padding:40px 0;margin:0;">
@@ -1712,6 +1886,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                         if ( typeof Chart === 'undefined' ) { return; }
 
                         var rawData  = <?php echo $analytics_json; ?>;
+                        var rawSourceData = <?php echo $source_analytics_json; ?>;
                         var allDates = Object.keys( rawData ).sort();
 
                         var fromInput = document.getElementById( 'brn-date-from' );
@@ -1769,6 +1944,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                             document.getElementById( 'brn-sum-email' ).textContent    = sums.email;
                             document.getElementById( 'brn-sum-form' ).textContent     = sums.form_submit;
                             document.getElementById( 'brn-sum-total' ).textContent    = sums.phone + sums.whatsapp + sums.email + sums.form_submit;
+                            renderSourceCards( dates );
 
                             var empty  = document.getElementById( 'brn-chart-empty' );
                             var canvas = document.getElementById( 'brn-analytics-chart' );
@@ -1813,6 +1989,42 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                     }
                                 } );
                             }
+                        }
+
+                        function renderSourceCards( dates ) {
+                            var wrapper = document.getElementById( 'brn-source-cards' );
+                            if ( ! wrapper ) {
+                                return;
+                            }
+
+                            var sourceTotals = {};
+                            dates.forEach( function ( d ) {
+                                var daySources = rawSourceData[ d ] || {};
+                                Object.keys( daySources ).forEach( function ( sourceKey ) {
+                                    if ( ! sourceTotals[ sourceKey ] ) {
+                                        sourceTotals[ sourceKey ] = 0;
+                                    }
+                                    sourceTotals[ sourceKey ] += daySources[ sourceKey ] || 0;
+                                } );
+                            } );
+
+                            var sorted = Object.keys( sourceTotals ).sort( function ( a, b ) {
+                                return sourceTotals[ b ] - sourceTotals[ a ];
+                            } );
+
+                            if ( sorted.length === 0 ) {
+                                wrapper.innerHTML = '<div style="color:#646970;">' + <?php echo wp_json_encode( __( 'No source data in this range.', 'brn-lead-count' ) ); ?> + '</div>';
+                                return;
+                            }
+
+                            var html = '';
+                            sorted.forEach( function ( key ) {
+                                html += '<div style="background:#f6f7f7;border:1px solid #dcdcde;padding:10px 14px;border-radius:6px;min-width:120px;text-align:center;">';
+                                html += '<div style="font-size:22px;font-weight:700;line-height:1.2;color:#1d2327;">' + sourceTotals[ key ] + '</div>';
+                                html += '<div style="font-size:12px;margin-top:4px;color:#50575e;">' + key + '</div>';
+                                html += '</div>';
+                            } );
+                            wrapper.innerHTML = html;
                         }
 
                         // Type-filter toggle buttons
@@ -1979,6 +2191,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                     <th><input type="checkbox" id="brn-select-all-leads" /></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'time' ) ); ?>"><?php esc_html_e( 'Time', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'type' ) ); ?>"><?php esc_html_e( 'Type', 'brn-lead-count' ); ?></a></th>
+                                    <th><a href="<?php echo esc_url( $build_sort( 'source' ) ); ?>"><?php esc_html_e( 'Source', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'is_test' ) ); ?>"><?php esc_html_e( 'Test', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'ip' ) ); ?>"><?php esc_html_e( 'IP', 'brn-lead-count' ); ?></a></th>
                                     <th><a href="<?php echo esc_url( $build_sort( 'browser' ) ); ?>"><?php esc_html_e( 'Browser', 'brn-lead-count' ); ?></a></th>
@@ -2005,6 +2218,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                             echo esc_html( isset( $lead_type_map[ $lead_type_raw ] ) ? $lead_type_map[ $lead_type_raw ] : $lead_type_raw );
                                             ?>
                                         </td>
+                                        <td><?php echo esc_html( $this->source_label( isset( $log['source'] ) ? (string) $log['source'] : '' ) ); ?></td>
                                         <td><?php echo ! empty( $log['is_test'] ) ? esc_html__( 'Test', 'brn-lead-count' ) : esc_html__( 'Real', 'brn-lead-count' ); ?></td>
                                         <td><?php echo esc_html( isset( $log['ip'] ) ? (string) $log['ip'] : '' ); ?></td>
                                         <td><?php echo esc_html( isset( $log['browser'] ) ? (string) $log['browser'] : '' ); ?></td>
@@ -2103,6 +2317,31 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                             <td><strong><?php echo esc_html( (string) $row_counts['total'] ); ?></strong></td>
                         </tr>
                         <?php endforeach; ?>
+                    </tbody>
+                </table>
+
+                <h3 style="margin-top:18px;"><?php esc_html_e( 'Source Breakdown (Last Day)', 'brn-lead-count' ); ?></h3>
+                <table class="widefat striped" style="max-width:460px;">
+                    <thead>
+                        <tr>
+                            <th><?php esc_html_e( 'Source', 'brn-lead-count' ); ?></th>
+                            <th><?php esc_html_e( 'Leads', 'brn-lead-count' ); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php $report_sources = isset( $report_payload['report_day_sources'] ) && is_array( $report_payload['report_day_sources'] ) ? $report_payload['report_day_sources'] : array(); ?>
+                        <?php if ( empty( $report_sources ) ) : ?>
+                            <tr>
+                                <td colspan="2"><?php esc_html_e( 'No source data.', 'brn-lead-count' ); ?></td>
+                            </tr>
+                        <?php else : ?>
+                            <?php foreach ( $report_sources as $source_key => $source_total ) : ?>
+                                <tr>
+                                    <td><?php echo esc_html( $this->source_label( (string) $source_key ) ); ?></td>
+                                    <td><strong><?php echo esc_html( (string) (int) $source_total ); ?></strong></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php endif; ?>
                     </tbody>
                 </table>
 

@@ -8,6 +8,46 @@
     var endpoint = brnLeadCountData.restUrl;
     var nonce    = brnLeadCountData.nonce;
 
+    function normalizeSource(raw) {
+        var source = (raw || '').toString().toLowerCase().trim();
+        source = source.replace(/\s+/g, '-').replace(/[^a-z0-9_.-]/g, '').replace(/^[.-]+|[.-]+$/g, '');
+        if (!source) {
+            source = 'direct';
+        }
+        return source.substring(0, 80);
+    }
+
+    function getLeadSource() {
+        try {
+            var params = null;
+            if (typeof URLSearchParams !== 'undefined') {
+                params = new URLSearchParams(window.location.search || '');
+            }
+            var keys = ['utm_source', 'source', 'src', 'ref'];
+            for (var i = 0; i < keys.length; i++) {
+                var key = keys[i];
+                var val = params ? params.get(key) : null;
+                if (val && val.trim()) {
+                    return normalizeSource(val);
+                }
+            }
+        } catch (e) {}
+
+        try {
+            if (document.referrer) {
+                var refUrl = new URL(document.referrer);
+                var host = (refUrl.hostname || '').replace(/^www\./, '');
+                if (host && host !== window.location.hostname.replace(/^www\./, '')) {
+                    return normalizeSource(host);
+                }
+            }
+        } catch (e) {}
+
+        return 'direct';
+    }
+
+    var leadSource = getLeadSource();
+
     // Deduplicate: ignore a second event for the same lead within 2 seconds.
     var recentLeadKeys = {};
 
@@ -29,6 +69,7 @@
             nonce:      nonce,
             lead_type:  leadType,
             label:      label || '',
+            source:     leadSource,
             url:        window.location.href,
             page_title: document.title || ''
         };
