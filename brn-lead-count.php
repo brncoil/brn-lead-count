@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.3.9
+ * Version: 1.4.0
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -851,7 +851,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.3.9',
+                '1.4.0',
                 true
             );
 
@@ -1052,6 +1052,15 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-reports',
                 array( $this, 'render_reports_page' )
             );
+
+            add_submenu_page(
+                'brn-lead-count-analytics',
+                __( 'Diagnostics', 'brn-lead-count' ),
+                __( 'Diagnostics', 'brn-lead-count' ),
+                'manage_options',
+                'brn-lead-count-diagnostics',
+                array( $this, 'render_diagnostics_page' )
+            );
         }
 
         public function register_settings() {
@@ -1081,6 +1090,92 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         public function render_reports_page() {
             $this->render_admin_page( 'reports' );
         }
+
+        public function render_diagnostics_page() {
+            if ( ! current_user_can( 'manage_options' ) ) {
+                return;
+            }
+
+            $rest_url     = rest_url( 'brn/v1/track' );
+            $token        = $this->get_tracking_token();
+            $plugin_ver   = '1.4.0';
+            $rest_enabled = (bool) get_option( 'permalink_structure', '' );
+            ?>
+            <div class="wrap">
+                <h1>BRN Lead Count — Diagnostics</h1>
+                <table class="widefat" style="max-width:700px;margin-top:16px;">
+                    <tr>
+                        <th style="width:200px;">Plugin version</th>
+                        <td><code><?php echo esc_html( $plugin_ver ); ?></code></td>
+                    </tr>
+                    <tr>
+                        <th>REST endpoint</th>
+                        <td><code id="brn-rest-url"><?php echo esc_html( $rest_url ); ?></code></td>
+                    </tr>
+                    <tr>
+                        <th>Tracking token</th>
+                        <td><code><?php echo esc_html( substr( $token, 0, 8 ) . '…' ); ?></code> (first 8 chars shown)</td>
+                    </tr>
+                    <tr>
+                        <th>Permalinks flushed</th>
+                        <td><?php echo $rest_enabled ? '<span style="color:green">✓ Yes (pretty permalinks active)</span>' : '<span style="color:red">✗ No — go to Settings → Permalinks and click Save</span>'; ?></td>
+                    </tr>
+                </table>
+
+                <h2 style="margin-top:24px;">Live connection test</h2>
+                <p>Click the button below. It fires the exact same request as a real lead from the frontend, using the current token. The raw HTTP status and response body are shown immediately.</p>
+                <button id="brn-diag-btn" class="button button-primary" style="font-size:15px;padding:6px 18px;">Run Test Now</button>
+                <pre id="brn-diag-result" style="margin-top:12px;background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:6px;font-size:13px;min-height:60px;white-space:pre-wrap;display:none;"></pre>
+
+                <script>
+                document.getElementById('brn-diag-btn').addEventListener('click', function () {
+                    var btn    = this;
+                    var result = document.getElementById('brn-diag-result');
+                    var url    = <?php echo wp_json_encode( $rest_url ); ?>;
+                    var token  = <?php echo wp_json_encode( $token ); ?>;
+
+                    btn.disabled = true;
+                    btn.textContent = 'Testing…';
+                    result.style.display = 'block';
+                    result.textContent  = 'Sending request to:\n' + url + '\n\nWaiting…';
+
+                    var body = 'nonce=' + encodeURIComponent(token)
+                             + '&lead_type=phone'
+                             + '&label=diagnostics+test'
+                             + '&url=' + encodeURIComponent(window.location.href)
+                             + '&page_title=Diagnostics'
+                             + '&is_test=1';
+
+                    fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                        body: body
+                    })
+                    .then(function (resp) {
+                        var status = resp.status;
+                        return resp.text().then(function (text) {
+                            result.textContent =
+                                'HTTP ' + status + '\n\n' +
+                                'URL: ' + url + '\n\n' +
+                                'Response body:\n' + text;
+
+                            result.style.color = (status === 200) ? '#4ec94e' : '#f47b7b';
+                            btn.disabled = false;
+                            btn.textContent = 'Run Test Now';
+                        });
+                    })
+                    .catch(function (err) {
+                        result.textContent = 'NETWORK ERROR: ' + err.message + '\n\nURL: ' + url;
+                        result.style.color = '#f47b7b';
+                        btn.disabled = false;
+                        btn.textContent = 'Run Test Now';
+                    });
+                });
+                </script>
+            </div>
+            <?php
+        }
+
 
         // ΓöÇΓöÇ Updater methods ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ //
 
