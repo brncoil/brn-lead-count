@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.3.6
+ * Version: 1.3.7
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -39,6 +39,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         const OPTION_STATS    = 'brn_lead_count_stats';
         const OPTION_SETTINGS = 'brn_lead_count_settings';
         const NONCE_ACTION    = 'brn_lead_count_track';
+        const OPTION_TRACKING_TOKEN = 'brn_lead_count_tracking_token';
         const MAX_LOGS_DEFAULT = 300;
         const OPTION_REPORT_SCHEDULE_HASH = 'brn_lead_count_report_schedule_hash';
         const OPTION_LAST_REPORT_SENT = 'brn_lead_count_last_report_sent';
@@ -70,6 +71,22 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // Load Chart.js on our admin page only.
             add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_scripts' ) );
+        }
+
+        /**
+         * Return a permanent site-specific tracking token, creating one if absent.
+         * Unlike WP nonces, this token never expires, so it works correctly even
+         * when served from a cached page (e.g. WP Engine full-page cache).
+         *
+         * @return string
+         */
+        private function get_tracking_token() {
+            $token = get_option( self::OPTION_TRACKING_TOKEN, '' );
+            if ( '' === $token ) {
+                $token = wp_generate_password( 32, false );
+                update_option( self::OPTION_TRACKING_TOKEN, $token, false );
+            }
+            return $token;
         }
 
         public function maybe_init_options() {
@@ -786,7 +803,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.3.6',
+                '1.3.7',
                 true
             );
 
@@ -795,17 +812,21 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brnLeadCountData',
                 array(
                     'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-                    'nonce'   => wp_create_nonce( self::NONCE_ACTION ),
+                    'nonce'   => $this->get_tracking_token(),
                 )
             );
         }
 
         public function track_event() {
-            if ( ! check_ajax_referer( self::NONCE_ACTION, 'nonce', false ) ) {
-                wp_send_json_error( array( 'message' => 'Invalid nonce.' ), 403 );
+            $request        = wp_unslash( $_REQUEST );
+            $supplied_token = isset( $request['nonce'] ) ? sanitize_text_field( $request['nonce'] ) : '';
+            $stored_token   = $this->get_tracking_token();
+
+            if ( '' === $supplied_token || ! hash_equals( $stored_token, $supplied_token ) ) {
+                wp_send_json_error( array( 'message' => 'Invalid token.' ), 403 );
+                return;
             }
 
-            $request = wp_unslash( $_REQUEST );
 
             $type = isset( $request['lead_type'] ) ? sanitize_key( $request['lead_type'] ) : '';
             $label = isset( $request['label'] ) ? sanitize_text_field( $request['label'] ) : '';
