@@ -7,8 +7,49 @@
 
     var endpoint = brnLeadCountData.ajaxUrl;
     var nonce = brnLeadCountData.nonce;
+    var recentLeadKeys = {};
+    var pendingImages = [];
 
-    function sendLead(leadType, label) {
+    function shouldSkipDuplicate(leadType, label) {
+        var key = leadType + '|' + (label || '');
+        var now = Date.now();
+
+        if (recentLeadKeys[key] && now - recentLeadKeys[key] < 1500) {
+            return true;
+        }
+
+        recentLeadKeys[key] = now;
+        return false;
+    }
+
+    function releasePendingImage(image) {
+        var index = pendingImages.indexOf(image);
+        if (index !== -1) {
+            pendingImages.splice(index, 1);
+        }
+    }
+
+    function getEventTarget(event) {
+        var target = event.target;
+
+        if (target && target.nodeType === 3) {
+            target = target.parentNode;
+        }
+
+        if (!target || typeof target.closest !== 'function') {
+            return null;
+        }
+
+        return target;
+    }
+
+    function sendLead(leadType, label, options) {
+        options = options || {};
+
+        if (shouldSkipDuplicate(leadType, label)) {
+            return;
+        }
+
         var data = new URLSearchParams();
         data.append('action', 'brn_lead_count_track');
         data.append('nonce', nonce);
@@ -17,7 +58,19 @@
         data.append('url', window.location.href);
         data.append('page_title', document.title || '');
 
-        if (navigator.sendBeacon) {
+        if (options.allowGetFallback) {
+            var img = new Image();
+            pendingImages.push(img);
+            img.onload = function () {
+                releasePendingImage(img);
+            };
+            img.onerror = function () {
+                releasePendingImage(img);
+            };
+            img.src = endpoint + '?' + data.toString() + '&transport=get&_=' + Date.now();
+        }
+
+        if (navigator.sendBeacon && options.useBeacon !== false) {
             var blob = new Blob([data.toString()], {
                 type: 'application/x-www-form-urlencoded; charset=UTF-8'
             });
@@ -52,9 +105,9 @@
         return text.substring(0, 180);
     }
 
-    document.addEventListener('click', function (event) {
-        var target = event.target;
-        if (!target || typeof target.closest !== 'function') {
+    function handleTrackedLink(event) {
+        var target = getEventTarget(event);
+        if (!target) {
             return;
         }
 
@@ -71,12 +124,12 @@
         var normalized = href.toLowerCase();
 
         if (normalized.indexOf('tel:') === 0) {
-            sendLead('phone', getTextContent(link));
+            sendLead('phone', getTextContent(link), { allowGetFallback: true });
             return;
         }
 
         if (normalized.indexOf('mailto:') === 0) {
-            sendLead('email', getTextContent(link));
+            sendLead('email', getTextContent(link), { allowGetFallback: true });
             return;
         }
 
@@ -88,9 +141,13 @@
             normalized.indexOf('whatsapp.com/') > -1;
 
         if (isWhatsapp) {
-            sendLead('whatsapp', getTextContent(link));
+            sendLead('whatsapp', getTextContent(link), { allowGetFallback: true });
         }
-    }, true);
+    }
+
+    document.addEventListener('pointerdown', handleTrackedLink, true);
+    document.addEventListener('touchstart', handleTrackedLink, true);
+    document.addEventListener('click', handleTrackedLink, true);
 
     document.addEventListener('submit', function (event) {
         var form = event.target;
