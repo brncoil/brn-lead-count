@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.4.2
+ * Version: 1.4.3
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -169,8 +169,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'test_users'     => '',
                 'test_ips'       => '',
                 'report_emails'  => '',
-                'report_send_time' => '09:00',
-                'report_language' => 'en',
+                'report_send_time'         => '09:00',
+                'report_language'          => 'en',
+                'enable_recommendations'   => 0,
             );
 
             $settings = get_option( self::OPTION_SETTINGS, array() );
@@ -182,7 +183,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $settings['test_ips'] = isset( $settings['test_ips'] ) ? (string) $settings['test_ips'] : '';
             $settings['report_emails'] = isset( $settings['report_emails'] ) ? (string) $settings['report_emails'] : '';
             $settings['report_send_time'] = isset( $settings['report_send_time'] ) ? (string) $settings['report_send_time'] : '09:00';
-            $settings['report_language'] = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] ) ? 'he' : 'en';
+            $settings['report_language']        = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] ) ? 'he' : 'en';
+            $settings['enable_recommendations'] = empty( $settings['enable_recommendations'] ) ? 0 : 1;
 
             return $settings;
         }
@@ -630,31 +632,68 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $stats = get_option( self::OPTION_STATS, $this->get_empty_stats() );
             $logs  = isset( $stats['logs'] ) && is_array( $stats['logs'] ) ? $stats['logs'] : array();
 
-            $tz   = wp_timezone();
-            $now  = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : time() ) );
-            $now  = $now->setTimezone( $tz );
+            $tz  = wp_timezone();
+            $now = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : time() ) );
+            $now = $now->setTimezone( $tz );
 
-            $report_day = $now->modify( '-1 day' );
+            // Yesterday (the report day).
+            $report_day       = $now->modify( '-1 day' );
             $report_day_start = $report_day->setTime( 0, 0, 0 );
-            $report_day_end = $report_day->setTime( 23, 59, 59 );
+            $report_day_end   = $report_day->setTime( 23, 59, 59 );
 
-            $last_month_report_day = $report_day->modify( '-1 month' );
-            $last_month_report_day_start = $last_month_report_day->setTime( 0, 0, 0 );
-            $last_month_report_day_end = $last_month_report_day->setTime( 23, 59, 59 );
+            // Same calendar day of previous month (for single-day comparison).
+            $last_month_day       = $report_day->modify( '-1 month' );
+            $last_month_day_start = $last_month_day->setTime( 0, 0, 0 );
+            $last_month_day_end   = $last_month_day->setTime( 23, 59, 59 );
 
+            // Month-to-date: first of current month -> yesterday end.
             $mtd_start = $now->modify( 'first day of this month' )->setTime( 0, 0, 0 );
-            $mtd_end = $report_day_end;
+            $mtd_end   = $report_day_end;
 
+            // Previous-month MTD: first of prev month -> same day-of-month in prev month.
+            $prev_month_first    = $now->modify( 'first day of last month' )->setTime( 0, 0, 0 );
+            $prev_month_same_day = $last_month_day->setTime( 23, 59, 59 );
+
+            // Same month last year (for legacy admin preview).
             $last_year_same_month_start = $now->modify( '-1 year' )->modify( 'first day of this month' )->setTime( 0, 0, 0 );
-            $last_year_same_month_end = $report_day_end->modify( '-1 year' );
+            $last_year_same_month_end   = $report_day_end->modify( '-1 year' );
+
+            // Source counts for all relevant windows.
+            $report_day_sources = $this->get_window_source_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() );
+            $mtd_sources        = $this->get_window_source_counts( $logs, $mtd_start->getTimestamp(), $mtd_end->getTimestamp() );
+            $prev_mtd_sources   = $this->get_window_source_counts( $logs, $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() );
+
+            // Build merged sources table sorted by MTD descending.
+            $all_source_keys = array_unique( array_merge( array_keys( $mtd_sources ), array_keys( $prev_mtd_sources ) ) );
+            $sources_table   = array();
+            foreach ( $all_source_keys as $sk ) {
+                $day_val  = isset( $report_day_sources[ $sk ] ) ? (int) $report_day_sources[ $sk ] : 0;
+                $mtd_val  = isset( $mtd_sources[ $sk ] ) ? (int) $mtd_sources[ $sk ] : 0;
+                $prev_val = isset( $prev_mtd_sources[ $sk ] ) ? (int) $prev_mtd_sources[ $sk ] : 0;
+                $sources_table[ $sk ] = array(
+                    'day'   => $day_val,
+                    'mtd'   => $mtd_val,
+                    'prev'  => $prev_val,
+                    'trend' => $this->build_trend_data( $mtd_val, $prev_val ),
+                );
+            }
+            uasort( $sources_table, function ( $a, $b ) {
+                return $b['mtd'] - $a['mtd'];
+            } );
 
             return array(
-                'now_label' => wp_date( 'Y-m-d H:i', $now->getTimestamp() ),
+                'now_label'        => wp_date( 'Y-m-d H:i', $now->getTimestamp() ),
                 'report_day_label' => wp_date( 'Y-m-d', $report_day_start->getTimestamp() ),
-                'report_day' => $this->get_window_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
-                'report_day_sources' => $this->get_window_source_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
-                'same_day_last_month' => $this->get_window_counts( $logs, $last_month_report_day_start->getTimestamp(), $last_month_report_day_end->getTimestamp() ),
-                'mtd_current' => $this->get_window_counts( $logs, $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
+                // Single-day windows.
+                'report_day'          => $this->get_window_counts( $logs, $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
+                'same_day_last_month' => $this->get_window_counts( $logs, $last_month_day_start->getTimestamp(), $last_month_day_end->getTimestamp() ),
+                // MTD windows.
+                'mtd_current'    => $this->get_window_counts( $logs, $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
+                'mtd_prev_month' => $this->get_window_counts( $logs, $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() ),
+                // Sources.
+                'report_day_sources' => $report_day_sources,
+                'sources_table'      => $sources_table,
+                // Legacy key kept for admin preview tab.
                 'same_month_last_year' => $this->get_window_counts( $logs, $last_year_same_month_start->getTimestamp(), $last_year_same_month_end->getTimestamp() ),
             );
         }
@@ -700,179 +739,255 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
          * @return string
          */
         private function build_daily_report_html( $report ) {
-            $settings         = $this->get_settings();
-            $is_hebrew        = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
-            $domain           = $this->get_site_domain();
-            $period_title     = $is_hebrew ? 'סיכום יומי (יום קודם)' : 'Daily Report (Previous Day)';
-            $period_subtitle  = $is_hebrew ? 'סקירת לידים יומית' : 'Your daily lead momentum report';
-            $site_label       = $is_hebrew ? 'אתר' : 'Site';
-            $last_day_label   = $is_hebrew ? 'סה"כ יום קודם' : 'Last Day Total';
-            $mix_period_label = $is_hebrew ? 'תמהיל לידים לפי תקופה' : 'Lead Mix by Period';
-            $breakdown_label  = $is_hebrew ? 'טלפון / וואטסאפ / אימייל / טופס' : 'Phone / WhatsApp / Email / Form';
-            $source_breakdown_label = $is_hebrew ? 'מקור לידים (יום קודם)' : 'Lead Sources (Last Day)';
-            $mtd_label        = $is_hebrew ? 'מצטבר חודשי' : 'Month To Date';
-            $mtd_compare_label = $is_hebrew ? 'השוואה לאותו חודש בשנה שעברה' : 'Compared against same month last year';
-            $trend_last_day_vs_last_month = $is_hebrew ? 'יום קודם מול אותו יום בחודש שעבר' : 'Last day vs same day last month';
-            $trend_mtd_vs_last_year = $is_hebrew ? 'מצטבר חודשי מול אותו חודש בשנה שעברה' : 'MTD vs same month last year';
-            $trend_snapshot_label = $is_hebrew ? 'מבט מגמה' : 'Trend Snapshot';
-            $no_change_label  = $is_hebrew ? 'ללא שינוי' : 'No change';
-            $period_col_label = $is_hebrew ? 'תקופה' : 'Period';
-            $phone_col_label  = $is_hebrew ? 'טלפון' : 'Phone';
-            $whatsapp_col_label = $is_hebrew ? 'וואטסאפ' : 'WhatsApp';
-            $email_col_label  = $is_hebrew ? 'אימייל' : 'Email';
-            $form_col_label   = $is_hebrew ? 'טופס' : 'Form';
-            $total_col_label  = $is_hebrew ? 'סה"כ' : 'Total';
-            $last_day_row_label = $is_hebrew ? 'יום קודם' : 'Last day';
-            $same_day_last_month_row_label = $is_hebrew ? 'אותו יום בחודש שעבר' : 'Same day last month';
-            $mtd_row_label = $is_hebrew ? 'מצטבר חודשי' : 'Month to date';
-            $same_month_last_year_row_label = $is_hebrew ? 'אותו חודש בשנה שעברה' : 'Same month last year';
-            $mtd_table_row_label = $is_hebrew ? 'מצטבר חודשי' : 'Month-to-date';
-            $footer_message = $is_hebrew
+            $settings  = $this->get_settings();
+            $is_hebrew = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
+            $dir       = $is_hebrew ? 'rtl' : 'ltr';
+            $domain    = $this->get_site_domain();
+
+            // ---- Labels ----
+            $lbl_title            = $is_hebrew ? 'סיכום יומי – לידים' : 'Daily Lead Report';
+            $lbl_subtitle         = $is_hebrew ? 'סקירת לידים יומית' : 'Your daily lead summary';
+            $lbl_site             = $is_hebrew ? 'אתר' : 'Site';
+            $lbl_yesterday        = $is_hebrew ? 'יום קודם' : 'Yesterday';
+            $lbl_mtd              = $is_hebrew ? 'מצטבר חודשי' : 'Month to Date';
+            $lbl_vs_prev          = $is_hebrew ? 'מול חודש קודם' : 'vs Prev Month';
+            $lbl_no_change        = $is_hebrew ? 'ללא שינוי' : 'No change';
+            $lbl_phone            = $is_hebrew ? 'טלפון' : 'Phone';
+            $lbl_whatsapp         = $is_hebrew ? 'וואטסאפ' : 'WhatsApp';
+            $lbl_email_type       = $is_hebrew ? 'אימייל' : 'Email';
+            $lbl_form             = $is_hebrew ? 'טופס' : 'Form';
+            $lbl_source_section   = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
+            $lbl_source_col       = $is_hebrew ? 'מקור' : 'Source';
+            $lbl_reco_section     = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
+            $lbl_footer           = $is_hebrew
                 ? 'התמדה בקמפיינים הופכת את הדופק היומי לצמיחה חודשית מצטברת.'
-                : 'Stay consistent with campaigns, and your daily pulse can turn into monthly compounding growth.';
+                : 'Stay consistent with campaigns, and your daily pulse turns into compounding monthly growth.';
 
-            $today_total      = isset( $report['report_day']['total'] ) ? (int) $report['report_day']['total'] : 0;
-            $last_month_total = isset( $report['same_day_last_month']['total'] ) ? (int) $report['same_day_last_month']['total'] : 0;
-            $mtd_total        = isset( $report['mtd_current']['total'] ) ? (int) $report['mtd_current']['total'] : 0;
-            $last_year_total  = isset( $report['same_month_last_year']['total'] ) ? (int) $report['same_month_last_year']['total'] : 0;
-
-            $trend_today = $this->build_trend_data( $today_total, $last_month_total );
-            $trend_mtd   = $this->build_trend_data( $mtd_total, $last_year_total );
-
-            $max_total = max( 1, $today_total, $last_month_total, $mtd_total, $last_year_total );
-            $bar = static function ( $value ) use ( $max_total ) {
-                return (int) round( ( max( 0, (int) $value ) / $max_total ) * 100 );
+            // ---- Helpers ----
+            $n = static function ( $arr, $key ) {
+                return isset( $arr[ $key ] ) ? (int) $arr[ $key ] : 0;
             };
-
-            $trend_label = static function ( $trend ) use ( $no_change_label ) {
-                $sign = ( $trend['delta'] > 0 ) ? '+' : '';
-                if ( 'flat' === $trend['direction'] ) {
-                    return $no_change_label;
+            $trend_badge = function ( $current, $previous ) use ( $lbl_no_change ) {
+                $t     = $this->build_trend_data( $current, $previous );
+                $sign  = $t['delta'] > 0 ? '+' : '';
+                $color = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#60758f' );
+                if ( 'flat' === $t['direction'] ) {
+                    return '<span style="color:#60758f;font-size:12px;">' . esc_html( $lbl_no_change ) . '</span>';
                 }
-                return sprintf(
-                    '%s%d (%s%s%%)',
-                    $sign,
-                    (int) $trend['delta'],
-                    $sign,
-                    (string) $trend['pct']
-                );
+                return '<span style="color:' . esc_attr( $color ) . ';font-size:12px;font-weight:600;">'
+                    . esc_html( $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)' )
+                    . '</span>';
             };
 
-            $today_breakdown = sprintf(
-                '%d / %d / %d / %d',
-                isset( $report['report_day']['phone'] ) ? (int) $report['report_day']['phone'] : 0,
-                isset( $report['report_day']['whatsapp'] ) ? (int) $report['report_day']['whatsapp'] : 0,
-                isset( $report['report_day']['email'] ) ? (int) $report['report_day']['email'] : 0,
-                isset( $report['report_day']['form_submit'] ) ? (int) $report['report_day']['form_submit'] : 0
-            );
+            $rd  = isset( $report['report_day'] ) ? $report['report_day'] : array();
+            $mtd = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
+            $pmt = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
 
+            // ---- Outer wrapper ----
             $html  = '<div style="font-family:Segoe UI,Arial,sans-serif;background:#f4f7fb;padding:24px;">';
-            $html .= '<div style="max-width:800px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(25,48,89,0.12);" dir="' . ( $is_hebrew ? 'rtl' : 'ltr' ) . '">';
+            $html .= '<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(25,48,89,0.12);" dir="' . esc_attr( $dir ) . '">';
+
+            // ---- Header ----
             $html .= '<div style="background:linear-gradient(135deg,#0f5fb7 0%,#27b3a9 100%);padding:22px 26px;color:#ffffff;">';
-            $html .= '<h1 style="margin:0 0 6px;font-size:28px;line-height:1.2;color:#ffffff;">' . esc_html( $period_title ) . '</h1>';
-            $html .= '<p style="margin:0;font-size:14px;opacity:0.95;">' . esc_html( $period_subtitle ) . ' - ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</p>';
-            $html .= '<p style="margin:8px 0 0;font-size:13px;opacity:0.95;">' . esc_html( $site_label . ': ' . $domain ) . '</p>';
+            $html .= '<h1 style="margin:0 0 5px;font-size:22px;color:#ffffff;">' . esc_html( $lbl_title ) . '</h1>';
+            $html .= '<p style="margin:0;font-size:13px;opacity:.9;">' . esc_html( $lbl_subtitle ) . ' &mdash; ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</p>';
+            $html .= '<p style="margin:6px 0 0;font-size:12px;opacity:.85;">' . esc_html( $lbl_site . ': ' . $domain ) . '</p>';
             $html .= '</div>';
 
-            $html .= '<div style="padding:20px 24px 8px;">';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;"><tr>';
-            $html .= '<td style="width:50%;padding:0 8px 8px 0;">';
-            $html .= '<div style="background:#f5faff;border:1px solid #d7e8ff;border-radius:10px;padding:14px;">';
-            $html .= '<div style="font-size:12px;color:#4a5d7a;text-transform:uppercase;letter-spacing:.4px;">' . esc_html( $last_day_label ) . '</div>';
-            $html .= '<div style="font-size:34px;color:#0f5fb7;font-weight:700;line-height:1.1;">' . esc_html( (string) $today_total ) . '</div>';
-            $html .= '<div style="font-size:12px;color:#60758f;">' . esc_html( $breakdown_label ) . ': ' . esc_html( $today_breakdown ) . '</div>';
-            $html .= '</div></td>';
-            $html .= '<td style="width:50%;padding:0 0 8px 8px;">';
-            $html .= '<div style="background:#f7fff9;border:1px solid #d7f1df;border-radius:10px;padding:14px;">';
-            $html .= '<div style="font-size:12px;color:#456a55;text-transform:uppercase;letter-spacing:.4px;">' . esc_html( $mtd_label ) . '</div>';
-            $html .= '<div style="font-size:34px;color:#108554;font-weight:700;line-height:1.1;">' . esc_html( (string) $mtd_total ) . '</div>';
-            $html .= '<div style="font-size:12px;color:#60758f;">' . esc_html( $mtd_compare_label ) . '</div>';
-            $html .= '</div></td>';
-            $html .= '</tr></table>';
+            $html .= '<div style="padding:20px 22px 16px;">';
 
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;"><tr>';
-            $html .= '<td style="width:50%;padding:0 8px 0 0;">';
-            $html .= '<div style="background:#ffffff;border:1px solid #e4ebf4;border-radius:10px;padding:12px;">';
-            $html .= '<div style="font-size:12px;color:#4a5d7a;">' . esc_html( $trend_last_day_vs_last_month ) . '</div>';
-            $html .= '<div style="font-size:20px;font-weight:700;color:' . ( 'down' === $trend_today['direction'] ? '#c0392b' : '#108554' ) . ';">' . esc_html( $trend_label( $trend_today ) ) . '</div>';
-            $html .= '</div></td>';
-            $html .= '<td style="width:50%;padding:0 0 0 8px;">';
-            $html .= '<div style="background:#ffffff;border:1px solid #e4ebf4;border-radius:10px;padding:12px;">';
-            $html .= '<div style="font-size:12px;color:#4a5d7a;">' . esc_html( $trend_mtd_vs_last_year ) . '</div>';
-            $html .= '<div style="font-size:20px;font-weight:700;color:' . ( 'down' === $trend_mtd['direction'] ? '#c0392b' : '#108554' ) . ';">' . esc_html( $trend_label( $trend_mtd ) ) . '</div>';
-            $html .= '</div></td>';
-            $html .= '</tr></table>';
+            // ==== SECTION 1 – 2 KPI Boxes ====
+            $today_total = $n( $rd, 'total' );
+            $mtd_total   = $n( $mtd, 'total' );
+            $pmt_total   = $n( $pmt, 'total' );
 
-            $html .= '<div style="font-size:14px;font-weight:600;color:#1a3252;margin-bottom:8px;">' . esc_html( $trend_snapshot_label ) . '</div>';
-
-            $rows = array(
-                $last_day_row_label => $today_total,
-                $same_day_last_month_row_label => $last_month_total,
-                $mtd_row_label => $mtd_total,
-                $same_month_last_year_row_label => $last_year_total,
-            );
-
-            foreach ( $rows as $label => $value ) {
-                $html .= '<div style="margin:0 0 8px;">';
-                $html .= '<div style="display:flex;justify-content:space-between;font-size:12px;color:#4a5d7a;margin:0 0 4px;"><span>' . esc_html( $label ) . '</span><strong>' . esc_html( (string) $value ) . '</strong></div>';
-                $html .= '<div style="height:10px;background:#e8eef6;border-radius:999px;overflow:hidden;"><div style="height:10px;background:linear-gradient(90deg,#2e7cd8,#2fc0a5);width:' . esc_attr( (string) $bar( $value ) ) . '%;"></div></div>';
-                $html .= '</div>';
-            }
-
-            $html .= '<div style="margin-top:14px;font-size:14px;font-weight:600;color:#1a3252;">' . esc_html( $mix_period_label ) . '</div>';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;font-size:12px;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:16px;border-collapse:separate;">';
             $html .= '<tr>';
-            $html .= '<th style="text-align:left;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $period_col_label ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $phone_col_label ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $whatsapp_col_label ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $email_col_label ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $form_col_label ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html( $total_col_label ) . '</th>';
-            $html .= '</tr>';
+            // Box 1 – Yesterday
+            $html .= '<td style="width:50%;vertical-align:top;">';
+            $html .= '<div style="background:#f5faff;border:1px solid #cce0ff;border-radius:10px;padding:14px 16px;">';
+            $html .= '<div style="font-size:11px;color:#4a5d7a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:38px;font-weight:700;color:#0f5fb7;line-height:1.1;">' . esc_html( (string) $today_total ) . '</div>';
+            $html .= '</div></td>';
+            // Box 2 – MTD
+            $html .= '<td style="width:50%;vertical-align:top;">';
+            $html .= '<div style="background:#f6fff9;border:1px solid #b8ebd0;border-radius:10px;padding:14px 16px;">';
+            $html .= '<div style="font-size:11px;color:#3a6650;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:38px;font-weight:700;color:#1a8a50;line-height:1.1;">' . esc_html( (string) $mtd_total ) . '</div>';
+            $html .= '<div style="margin-top:4px;">' . $trend_badge( $mtd_total, $pmt_total ) . ' <span style="font-size:11px;color:#8a9bb0;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
+            $html .= '</div></td>';
+            $html .= '</tr></table>';
 
-            $mix_rows = array(
-                $last_day_row_label => $report['report_day'],
-                $same_day_last_month_row_label => $report['same_day_last_month'],
-                $mtd_table_row_label => $report['mtd_current'],
-                $same_month_last_year_row_label => $report['same_month_last_year'],
+            // ==== SECTION 2 – 4 Lead-Type Boxes ====
+            $types = array(
+                'phone'       => array( 'label' => $lbl_phone,      'icon' => '📞' ),
+                'whatsapp'    => array( 'label' => $lbl_whatsapp,   'icon' => '💬' ),
+                'form_submit' => array( 'label' => $lbl_form,       'icon' => '📋' ),
+                'email'       => array( 'label' => $lbl_email_type, 'icon' => '✉️' ),
             );
 
-            foreach ( $mix_rows as $label => $counts ) {
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:16px;border-collapse:separate;">';
+            $pairs = array_chunk( array_keys( $types ), 2 );
+            foreach ( $pairs as $pair ) {
                 $html .= '<tr>';
-                $html .= '<td style="padding:8px;border-bottom:1px solid #f1f4f8;">' . esc_html( $label ) . '</td>';
-                $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;">' . esc_html( (string) ( isset( $counts['phone'] ) ? (int) $counts['phone'] : 0 ) ) . '</td>';
-                $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;">' . esc_html( (string) ( isset( $counts['whatsapp'] ) ? (int) $counts['whatsapp'] : 0 ) ) . '</td>';
-                $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;">' . esc_html( (string) ( isset( $counts['email'] ) ? (int) $counts['email'] : 0 ) ) . '</td>';
-                $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;">' . esc_html( (string) ( isset( $counts['form_submit'] ) ? (int) $counts['form_submit'] : 0 ) ) . '</td>';
-                $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;font-weight:700;">' . esc_html( (string) ( isset( $counts['total'] ) ? (int) $counts['total'] : 0 ) ) . '</td>';
+                foreach ( $pair as $type_key ) {
+                    $type_cfg  = $types[ $type_key ];
+                    $day_val   = $n( $rd, $type_key );
+                    $mtd_val   = $n( $mtd, $type_key );
+                    $pmt_val   = $n( $pmt, $type_key );
+                    $html .= '<td style="width:50%;vertical-align:top;">';
+                    $html .= '<div style="background:#fafbfd;border:1px solid #e4ebf4;border-radius:10px;padding:12px 14px;">';
+                    $html .= '<div style="font-size:12px;font-weight:600;color:#1a3252;margin-bottom:6px;">' . esc_html( $type_cfg['icon'] . ' ' . $type_cfg['label'] ) . '</div>';
+                    $html .= '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+                    $html .= '<div><div style="font-size:10px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
+                    $html .= '<div style="font-size:20px;font-weight:700;color:#0f5fb7;">' . esc_html( (string) $day_val ) . '</div></div>';
+                    $html .= '<div><div style="font-size:10px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
+                    $html .= '<div style="font-size:20px;font-weight:700;color:#1a8a50;">' . esc_html( (string) $mtd_val ) . '</div>';
+                    $html .= '<div style="margin-top:2px;">' . $trend_badge( $mtd_val, $pmt_val ) . '</div></div>';
+                    $html .= '</div>';
+                    $html .= '</div></td>';
+                }
+                // Pad odd row.
+                if ( 1 === count( $pair ) ) {
+                    $html .= '<td style="width:50%;"></td>';
+                }
                 $html .= '</tr>';
             }
             $html .= '</table>';
 
-            $html .= '<div style="margin-top:14px;font-size:14px;font-weight:600;color:#1a3252;">' . esc_html( $source_breakdown_label ) . '</div>';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:collapse;font-size:12px;">';
-            $html .= '<tr>';
-            $html .= '<th style="text-align:left;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html__( 'Source', 'brn-lead-count' ) . '</th>';
-            $html .= '<th style="text-align:right;padding:8px;border-bottom:1px solid #e4ebf4;">' . esc_html__( 'Leads', 'brn-lead-count' ) . '</th>';
+            // ==== SECTION 3 – Sources Table ====
+            $sources_table = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
+
+            $html .= '<div style="font-size:13px;font-weight:600;color:#1a3252;margin-bottom:6px;">' . esc_html( $lbl_source_section ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">';
+            $html .= '<tr style="background:#f0f4fb;">';
+            $html .= '<th style="text-align:' . ( $is_hebrew ? 'right' : 'left' ) . ';padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_source_col ) . '</th>';
+            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_yesterday ) . '</th>';
+            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_mtd ) . '</th>';
+            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_vs_prev ) . '</th>';
             $html .= '</tr>';
 
-            $report_day_sources = isset( $report['report_day_sources'] ) && is_array( $report['report_day_sources'] ) ? $report['report_day_sources'] : array();
-            if ( empty( $report_day_sources ) ) {
-                $html .= '<tr><td colspan="2" style="padding:8px;color:#60758f;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
+            if ( empty( $sources_table ) ) {
+                $html .= '<tr><td colspan="4" style="padding:8px 10px;color:#8a9bb0;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
             } else {
-                foreach ( $report_day_sources as $source_key => $source_total ) {
-                    $html .= '<tr>';
-                    $html .= '<td style="padding:8px;border-bottom:1px solid #f1f4f8;">' . esc_html( $this->source_label( (string) $source_key ) ) . '</td>';
-                    $html .= '<td style="padding:8px;text-align:right;border-bottom:1px solid #f1f4f8;font-weight:700;">' . esc_html( (string) (int) $source_total ) . '</td>';
+                $row_idx = 0;
+                foreach ( $sources_table as $sk => $row ) {
+                    $bg = ( 0 === $row_idx % 2 ) ? '#ffffff' : '#f9fbfd';
+                    $t  = isset( $row['trend'] ) ? $row['trend'] : array( 'direction' => 'flat', 'delta' => 0, 'pct' => 0 );
+                    $sign  = $t['delta'] > 0 ? '+' : '';
+                    $color = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#8a9bb0' );
+                    $trend_text = 'flat' === $t['direction'] ? $lbl_no_change : $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)';
+                    $html .= '<tr style="background:' . esc_attr( $bg ) . ';">';
+                    $html .= '<td style="padding:7px 10px;border-bottom:1px solid #f0f4f8;">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
+                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;">' . esc_html( (string) $row['day'] ) . '</td>';
+                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;font-weight:700;">' . esc_html( (string) $row['mtd'] ) . '</td>';
+                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;color:' . esc_attr( $color ) . ';font-weight:600;">' . esc_html( $trend_text ) . '</td>';
                     $html .= '</tr>';
+                    ++$row_idx;
                 }
             }
             $html .= '</table>';
 
-            $html .= '<p style="margin:16px 0 0;font-size:13px;color:#5a6e86;">' . esc_html( $footer_message ) . '</p>';
+            // ==== SECTION 4 – Recommendations (optional) ====
+            if ( ! empty( $settings['enable_recommendations'] ) ) {
+                $recs = $this->build_recommendations( $report );
+                if ( ! empty( $recs ) ) {
+                    $html .= '<div style="background:#fffbea;border:1px solid #f0d97a;border-radius:10px;padding:14px 16px;margin-bottom:16px;">';
+                    $html .= '<div style="font-size:13px;font-weight:600;color:#7a5c00;margin-bottom:8px;">&#128161; ' . esc_html( $lbl_reco_section ) . '</div>';
+                    $html .= '<ul style="margin:0;padding-' . ( $is_hebrew ? 'right' : 'left' ) . ':18px;">';
+                    foreach ( $recs as $rec ) {
+                        $html .= '<li style="font-size:12px;color:#4a3c00;margin-bottom:5px;">' . esc_html( $rec ) . '</li>';
+                    }
+                    $html .= '</ul></div>';
+                }
+            }
+
+            // ---- Footer ----
+            $html .= '<p style="margin:0 0 4px;font-size:12px;color:#8a9bb0;border-top:1px solid #edf0f5;padding-top:12px;">' . esc_html( $lbl_footer ) . '</p>';
             $html .= '</div></div></div>';
 
             return $html;
+        }
+
+        /**
+         * Generate rule-based recommendations from the report data.
+         *
+         * @param array $report
+         * @return string[]
+         */
+        private function build_recommendations( $report ) {
+            $recs = array();
+
+            $mtd     = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
+            $pmt     = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
+            $sources = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
+
+            $n = static function ( $arr, $key ) {
+                return isset( $arr[ $key ] ) ? (int) $arr[ $key ] : 0;
+            };
+
+            $mtd_total = $n( $mtd, 'total' );
+            $pmt_total = $n( $pmt, 'total' );
+
+            // 1. MTD total down >= 20% vs prev month.
+            if ( $pmt_total > 0 ) {
+                $drop_pct = ( ( $pmt_total - $mtd_total ) / $pmt_total ) * 100;
+                if ( $drop_pct >= 20 ) {
+                    $recs[] = sprintf(
+                        'Total leads are down %.0f%% vs last month — consider reviewing your campaign budget or messaging.',
+                        $drop_pct
+                    );
+                }
+            }
+
+            // 2. No leads this month at all.
+            if ( 0 === $mtd_total ) {
+                $recs[] = 'No leads recorded this month — verify the tracking script is active on all landing pages.';
+                return $recs; // Most other rules won't add value; return early.
+            }
+
+            // 3. WhatsApp is top type and growing.
+            $type_counts = array(
+                'phone'       => $n( $mtd, 'phone' ),
+                'whatsapp'    => $n( $mtd, 'whatsapp' ),
+                'form_submit' => $n( $mtd, 'form_submit' ),
+                'email'       => $n( $mtd, 'email' ),
+            );
+            arsort( $type_counts );
+            reset( $type_counts );
+            $top_type     = key( $type_counts );
+            $top_type_val = current( $type_counts );
+            if ( 'whatsapp' === $top_type && $top_type_val > 0 ) {
+                $prev_wa  = $n( $pmt, 'whatsapp' );
+                if ( $top_type_val > $prev_wa ) {
+                    $recs[] = 'WhatsApp is your fastest-growing channel — add more WhatsApp CTA buttons to key pages to capitalise on the trend.';
+                }
+            }
+
+            // 4. Direct traffic dominates (>= 70% of MTD leads by source).
+            if ( ! empty( $sources ) && $mtd_total > 0 ) {
+                $direct_mtd = isset( $sources['direct']['mtd'] ) ? (int) $sources['direct']['mtd'] : 0;
+                if ( ( $direct_mtd / $mtd_total ) >= 0.70 ) {
+                    $recs[] = 'Over 70% of your leads have no tracked source (Direct) — add UTM parameters to your campaigns to identify which channels are working.';
+                }
+            }
+
+            // 5. No form submissions but other leads exist.
+            if ( 0 === $n( $mtd, 'form_submit' ) && ( $n( $mtd, 'phone' ) > 0 || $n( $mtd, 'whatsapp' ) > 0 ) ) {
+                $recs[] = 'No form submissions this month — consider adding a prominent contact form, or check that Elementor form events are being tracked.';
+            }
+
+            // 6. No email link clicks.
+            if ( 0 === $n( $mtd, 'email' ) ) {
+                $recs[] = 'No email link clicks tracked this month — ensure mailto: links use a standard href="mailto:…" format and are visible on key pages.';
+            }
+
+            // 7. Only one source.
+            if ( 1 === count( $sources ) ) {
+                $recs[] = 'All your leads are coming from a single traffic source — diversifying channels will reduce risk and open new growth opportunities.';
+            }
+
+            return $recs;
         }
 
         /**
@@ -975,7 +1090,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.4.2',
+                '1.4.3',
                 true
             );
 
@@ -1244,7 +1359,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.4.2';
+            $plugin_ver   = '1.4.3';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
@@ -1536,7 +1651,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $output['report_send_time'] = isset( $input['report_send_time'] ) && preg_match( '/^\d{2}:\d{2}$/', (string) $input['report_send_time'] )
                 ? (string) $input['report_send_time']
                 : '09:00';
-            $output['report_language'] = ( isset( $input['report_language'] ) && 'he' === (string) $input['report_language'] ) ? 'he' : 'en';
+            $output['report_language']        = ( isset( $input['report_language'] ) && 'he' === (string) $input['report_language'] ) ? 'he' : 'en';
+            $output['enable_recommendations'] = empty( $input['enable_recommendations'] ) ? 0 : 1;
 
             return $output;
         }
@@ -2123,6 +2239,16 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                         <option value="he" <?php selected( 'he', isset( $settings['report_language'] ) ? $settings['report_language'] : 'en' ); ?>><?php esc_html_e( 'Hebrew', 'brn-lead-count' ); ?></option>
                                     </select>
                                     <p class="description"><?php esc_html_e( 'Choose report email language.', 'brn-lead-count' ); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php esc_html_e( 'Inference Recommendations', 'brn-lead-count' ); ?></th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" name="<?php echo esc_attr( self::OPTION_SETTINGS ); ?>[enable_recommendations]" value="1" <?php checked( 1, isset( $settings['enable_recommendations'] ) ? (int) $settings['enable_recommendations'] : 0 ); ?> />
+                                        <?php esc_html_e( 'Include rule-based recommendations in the daily email report.', 'brn-lead-count' ); ?>
+                                    </label>
+                                    <p class="description"><?php esc_html_e( 'Suggests actions to increase leads based on current trends and lead mix. Default: off.', 'brn-lead-count' ); ?></p>
                                 </td>
                             </tr>
                         </tbody>
