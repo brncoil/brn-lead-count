@@ -41,6 +41,7 @@ if ( ! class_exists( 'BRN_Updater' ) ) {
 		// ------------------------------------------------------------------ //
 
 		public function __construct() {
+			add_filter( 'site_transient_update_plugins', array( $this, 'filter_update_transient' ) );
 			add_filter( 'pre_set_site_transient_update_plugins', array( $this, 'filter_update_transient' ) );
 			add_filter( 'plugins_api', array( $this, 'filter_plugins_api' ), 20, 3 );
 			add_filter( 'auto_update_plugin', array( $this, 'enable_auto_update' ), 10, 2 );
@@ -63,7 +64,20 @@ if ( ! class_exists( 'BRN_Updater' ) ) {
 				$expiry = (int) get_option( self::OPT_EXPIRY, 0 );
 				$cached = get_option( self::OPT_CACHE );
 				if ( $cached && time() < $expiry ) {
-					return $cached;
+					$installed     = $this->get_installed_version();
+					$cached_ver    = isset( $cached['version'] ) ? (string) $cached['version'] : '';
+					$last_checked  = (int) get_option( self::OPT_LAST_CHECKED, 0 );
+					$cache_age     = $last_checked > 0 ? ( time() - $last_checked ) : PHP_INT_MAX;
+
+					// If cache already indicates an update, use it immediately.
+					if ( '' !== $cached_ver && version_compare( $installed, $cached_ver, '<' ) ) {
+						return $cached;
+					}
+
+					// If cache says no update, re-check periodically to avoid missing new releases for a full day.
+					if ( $cache_age < ( 15 * MINUTE_IN_SECONDS ) ) {
+						return $cached;
+					}
 				}
 			}
 
