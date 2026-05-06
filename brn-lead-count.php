@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.4.3
+ * Version: 1.4.4
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -1002,6 +1002,227 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
+         * Build a simple email body for the PDF report email.
+         *
+         * @param array  $report
+         * @param string $attachment_name
+         * @param bool   $is_hebrew
+         * @return string
+         */
+        private function build_daily_report_email_message( $report, $attachment_name, $is_hebrew ) {
+            $title   = $is_hebrew ? 'דוח הלידים היומי מוכן' : 'Your daily lead report is ready';
+            $intro   = $is_hebrew
+                ? 'הדוח מצורף כקובץ PDF כדי להבטיח תצוגה תקינה גם ב-Outlook.'
+                : 'The report is attached as a PDF to keep the layout consistent in Outlook.';
+            $date    = isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' );
+            $site    = $this->get_site_domain();
+            $file    = $is_hebrew ? 'קובץ מצורף' : 'Attached file';
+            $period  = $is_hebrew ? 'תאריך הדוח' : 'Report date';
+            $site_lbl = $is_hebrew ? 'אתר' : 'Site';
+
+            $html  = '<div style="font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;padding:24px;">';
+            $html .= '<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e4ebf4;border-radius:12px;padding:24px;" dir="' . ( $is_hebrew ? 'rtl' : 'ltr' ) . '">';
+            $html .= '<h1 style="margin:0 0 10px;font-size:22px;color:#1a3252;">' . esc_html( $title ) . '</h1>';
+            $html .= '<p style="margin:0 0 14px;font-size:14px;color:#4a5d7a;">' . esc_html( $intro ) . '</p>';
+            $html .= '<p style="margin:0 0 6px;font-size:13px;color:#60758f;"><strong>' . esc_html( $site_lbl ) . ':</strong> ' . esc_html( $site ) . '</p>';
+            $html .= '<p style="margin:0 0 6px;font-size:13px;color:#60758f;"><strong>' . esc_html( $period ) . ':</strong> ' . esc_html( $date ) . '</p>';
+            $html .= '<p style="margin:0;font-size:13px;color:#60758f;"><strong>' . esc_html( $file ) . ':</strong> ' . esc_html( $attachment_name ) . '</p>';
+            $html .= '</div></div>';
+
+            return $html;
+        }
+
+        /**
+         * Convert text to PDF-safe ASCII.
+         *
+         * @param string $text
+         * @return string
+         */
+        private function pdf_ascii_text( $text ) {
+            $text = remove_accents( (string) $text );
+            $text = str_replace(
+                array( "\r\n", "\r", '—', '–', '…', '"', '"', "'", "'" ),
+                array( "\n", "\n", '-', '-', '...', '"', '"', "'", "'" ),
+                $text
+            );
+            $text = preg_replace( '/[^\x20-\x7E\n]/', '', $text );
+            return trim( (string) $text );
+        }
+
+        /**
+         * Escape text for a PDF content stream.
+         *
+         * @param string $text
+         * @return string
+         */
+        private function pdf_escape_text( $text ) {
+            return str_replace( array( '\\', '(', ')' ), array( '\\\\', '\\(', '\\)' ), (string) $text );
+        }
+
+        /**
+         * Wrap plain text into PDF-safe lines.
+         *
+         * @param string $text
+         * @param int    $width
+         * @return array
+         */
+        private function pdf_wrap_lines( $text, $width = 78 ) {
+            $text = $this->pdf_ascii_text( $text );
+            if ( '' === $text ) {
+                return array( '' );
+            }
+
+            $wrapped = wordwrap( $text, (int) $width, "\n", true );
+            return explode( "\n", $wrapped );
+        }
+
+        /**
+         * Build PDF line content for the report attachment.
+         *
+         * @param array $report
+         * @return array
+         */
+        private function build_daily_report_pdf_lines( $report ) {
+            $domain       = $this->get_site_domain();
+            $report_date  = isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' );
+            $report_day   = isset( $report['report_day'] ) ? $report['report_day'] : array();
+            $mtd_current  = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
+            $mtd_previous = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
+            $sources      = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
+            $recs         = $this->build_recommendations( $report, false );
+
+            $n = static function ( $arr, $key ) {
+                return isset( $arr[ $key ] ) ? (int) $arr[ $key ] : 0;
+            };
+
+            $trend_text = function ( $current, $previous ) {
+                $trend = $this->build_trend_data( $current, $previous );
+                if ( 'flat' === $trend['direction'] ) {
+                    return 'No change';
+                }
+
+                $sign = $trend['delta'] > 0 ? '+' : '';
+                return $sign . $trend['delta'] . ' (' . $sign . $trend['pct'] . '%)';
+            };
+
+            $lines   = array();
+            $lines[] = 'BRN Lead Report';
+            $lines[] = 'Site: ' . $domain;
+            $lines[] = 'Report date: ' . $report_date;
+            $lines[] = '';
+            $lines[] = 'Summary';
+            $lines[] = 'Yesterday total: ' . $n( $report_day, 'total' );
+            $lines[] = 'Month to date total: ' . $n( $mtd_current, 'total' ) . ' | vs prev month: ' . $trend_text( $n( $mtd_current, 'total' ), $n( $mtd_previous, 'total' ) );
+            $lines[] = '';
+            $lines[] = 'Lead Types';
+            $lines[] = 'Phone: Yesterday ' . $n( $report_day, 'phone' ) . ' | MTD ' . $n( $mtd_current, 'phone' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'phone' ), $n( $mtd_previous, 'phone' ) );
+            $lines[] = 'WhatsApp: Yesterday ' . $n( $report_day, 'whatsapp' ) . ' | MTD ' . $n( $mtd_current, 'whatsapp' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'whatsapp' ), $n( $mtd_previous, 'whatsapp' ) );
+            $lines[] = 'Email: Yesterday ' . $n( $report_day, 'email' ) . ' | MTD ' . $n( $mtd_current, 'email' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'email' ), $n( $mtd_previous, 'email' ) );
+            $lines[] = 'Form: Yesterday ' . $n( $report_day, 'form_submit' ) . ' | MTD ' . $n( $mtd_current, 'form_submit' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'form_submit' ), $n( $mtd_previous, 'form_submit' ) );
+            $lines[] = '';
+            $lines[] = 'Sources';
+
+            if ( empty( $sources ) ) {
+                $lines[] = 'No source data.';
+            } else {
+                foreach ( $sources as $source_key => $row ) {
+                    $label   = $this->pdf_ascii_text( $this->source_label( (string) $source_key ) );
+                    $label   = '' !== $label ? $label : ucfirst( (string) $source_key );
+                    $lines[] = $label . ': Yesterday ' . (int) $row['day'] . ' | MTD ' . (int) $row['mtd'] . ' | Trend ' . $trend_text( (int) $row['mtd'], isset( $row['prev'] ) ? (int) $row['prev'] : 0 );
+                }
+            }
+
+            if ( ! empty( $recs ) ) {
+                $lines[] = '';
+                $lines[] = 'Recommendations';
+                foreach ( $recs as $rec ) {
+                    foreach ( $this->pdf_wrap_lines( '- ' . $rec, 82 ) as $wrapped_line ) {
+                        $lines[] = $wrapped_line;
+                    }
+                }
+            }
+
+            return $lines;
+        }
+
+        /**
+         * Render a simple multi-page text PDF.
+         *
+         * @param array $lines
+         * @return string
+         */
+        private function render_simple_text_pdf( $lines ) {
+            $lines = is_array( $lines ) ? array_values( $lines ) : array();
+            if ( empty( $lines ) ) {
+                return '';
+            }
+
+            $per_page = 42;
+            $pages    = array_chunk( $lines, $per_page );
+            $font_obj = 3 + ( count( $pages ) * 2 );
+            $objects  = array(
+                1 => '<< /Type /Catalog /Pages 2 0 R >>',
+                2 => '',
+            );
+            $kids     = array();
+
+            foreach ( $pages as $index => $page_lines ) {
+                $page_obj    = 3 + ( $index * 2 );
+                $content_obj = 4 + ( $index * 2 );
+                $kids[]      = $page_obj . ' 0 R';
+
+                $stream = "BT\n/F1 11 Tf\n50 760 Td\n";
+                foreach ( $page_lines as $line_index => $line ) {
+                    if ( $line_index > 0 ) {
+                        $stream .= "0 -16 Td\n";
+                    }
+                    $stream .= '(' . $this->pdf_escape_text( $this->pdf_ascii_text( (string) $line ) ) . ") Tj\n";
+                }
+                $stream .= "ET";
+
+                $objects[ $page_obj ]    = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ' . $font_obj . ' 0 R >> >> /Contents ' . $content_obj . ' 0 R >>';
+                $objects[ $content_obj ] = "<< /Length " . strlen( $stream ) . " >>\nstream\n" . $stream . "\nendstream";
+            }
+
+            $objects[2]         = '<< /Type /Pages /Count ' . count( $pages ) . ' /Kids [ ' . implode( ' ', $kids ) . ' ] >>';
+            $objects[ $font_obj ] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+            ksort( $objects );
+
+            $pdf     = "%PDF-1.4\n";
+            $offsets = array( 0 => 0 );
+
+            foreach ( $objects as $number => $body ) {
+                $offsets[ $number ] = strlen( $pdf );
+                $pdf               .= $number . " 0 obj\n" . $body . "\nendobj\n";
+            }
+
+            $xref_offset = strlen( $pdf );
+            $pdf        .= 'xref' . "\n";
+            $pdf        .= '0 ' . ( max( array_keys( $objects ) ) + 1 ) . "\n";
+            $pdf        .= "0000000000 65535 f \n";
+
+            for ( $i = 1; $i <= max( array_keys( $objects ) ); $i++ ) {
+                $offset = isset( $offsets[ $i ] ) ? $offsets[ $i ] : 0;
+                $pdf   .= sprintf( "%010d 00000 n \n", $offset );
+            }
+
+            $pdf .= 'trailer << /Size ' . ( max( array_keys( $objects ) ) + 1 ) . ' /Root 1 0 R >>' . "\n";
+            $pdf .= 'startxref' . "\n" . $xref_offset . "\n%%EOF";
+
+            return $pdf;
+        }
+
+        /**
+         * Build the PDF binary for the report attachment.
+         *
+         * @param array $report
+         * @return string
+         */
+        private function build_daily_report_pdf_binary( $report ) {
+            return $this->render_simple_text_pdf( $this->build_daily_report_pdf_lines( $report ) );
+        }
+
+        /**
          * Send daily report email.
          *
          * @return bool
@@ -1028,6 +1249,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             $report = $this->build_daily_report_payload();
+            $settings = $this->get_settings();
+            $is_hebrew = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
             $domain = $this->get_site_domain();
             $subject = sprintf(
                 '"%s" - BRN Lead count - %s',
@@ -1035,10 +1258,34 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 isset( $report['report_day_label'] ) ? $report['report_day_label'] : wp_date( 'Y-m-d' )
             );
 
+            $attachment_name = 'brn-lead-report-' . sanitize_file_name( $domain ) . '-' . sanitize_file_name( isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' ) ) . '.pdf';
             $headers = array( 'Content-Type: text/html; charset=UTF-8' );
-            $message = $this->build_daily_report_html( $report );
+            $message = $this->build_daily_report_email_message( $report, $attachment_name, $is_hebrew );
+            $attachments = array();
 
-            $sent = wp_mail( $emails, $subject, $message, $headers );
+            $pdf_binary = $this->build_daily_report_pdf_binary( $report );
+            if ( '' !== $pdf_binary ) {
+                $temp_dir = get_temp_dir();
+                if ( ! empty( $temp_dir ) && is_dir( $temp_dir ) && wp_is_writable( $temp_dir ) ) {
+                    $temp_file = trailingslashit( $temp_dir ) . wp_unique_filename( $temp_dir, $attachment_name );
+                    if ( false !== file_put_contents( $temp_file, $pdf_binary ) ) {
+                        $attachments[] = $temp_file;
+                    }
+                }
+            }
+
+            if ( empty( $attachments ) ) {
+                $message = $this->build_daily_report_html( $report );
+            }
+
+            $sent = wp_mail( $emails, $subject, $message, $headers, $attachments );
+
+            foreach ( $attachments as $attachment ) {
+                if ( is_string( $attachment ) && file_exists( $attachment ) ) {
+                    unlink( $attachment );
+                }
+            }
+
             if ( $sent ) {
                 update_option( self::OPTION_LAST_REPORT_SENT, time(), false );
             }
@@ -1101,7 +1348,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.4.3',
+                '1.4.4',
                 true
             );
 
@@ -1370,7 +1617,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.4.3';
+            $plugin_ver   = '1.4.4';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
