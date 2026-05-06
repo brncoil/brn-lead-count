@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.4.4
+ * Version: 1.4.3
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -744,167 +744,177 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $dir       = $is_hebrew ? 'rtl' : 'ltr';
             $domain    = $this->get_site_domain();
 
-            // ---- Labels ----
-            $lbl_title            = $is_hebrew ? 'סיכום יומי – לידים' : 'Daily Lead Report';
-            $lbl_subtitle         = $is_hebrew ? 'סקירת לידים יומית' : 'Your daily lead summary';
-            $lbl_site             = $is_hebrew ? 'אתר' : 'Site';
-            $lbl_yesterday        = $is_hebrew ? 'יום קודם' : 'Yesterday';
-            $lbl_mtd              = $is_hebrew ? 'מצטבר חודשי' : 'Month to Date';
-            $lbl_vs_prev          = $is_hebrew ? 'מול חודש קודם' : 'vs Prev Month';
-            $lbl_no_change        = $is_hebrew ? 'ללא שינוי' : 'No change';
-            $lbl_phone            = $is_hebrew ? 'טלפון' : 'Phone';
-            $lbl_whatsapp         = $is_hebrew ? 'וואטסאפ' : 'WhatsApp';
-            $lbl_email_type       = $is_hebrew ? 'אימייל' : 'Email';
-            $lbl_form             = $is_hebrew ? 'טופס' : 'Form';
-            $lbl_source_section   = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
-            $lbl_source_col       = $is_hebrew ? 'מקור' : 'Source';
-            $lbl_reco_section     = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
-            $lbl_footer           = $is_hebrew
+            $lbl_title          = $is_hebrew ? 'סיכום יומי - לידים' : 'Daily Lead Report';
+            $lbl_subtitle       = $is_hebrew ? 'סקירת לידים יומית' : 'Your daily lead summary';
+            $lbl_site           = $is_hebrew ? 'אתר' : 'Site';
+            $lbl_yesterday      = $is_hebrew ? 'יום קודם' : 'Yesterday';
+            $lbl_mtd            = $is_hebrew ? 'מצטבר חודשי' : 'Month to Date';
+            $lbl_vs_prev        = $is_hebrew ? 'מול חודש קודם' : 'vs Prev Month';
+            $lbl_no_change      = $is_hebrew ? 'ללא שינוי' : 'No change';
+            $lbl_phone          = $is_hebrew ? 'טלפון' : 'Phone';
+            $lbl_whatsapp       = $is_hebrew ? 'וואטסאפ' : 'WhatsApp';
+            $lbl_email_type     = $is_hebrew ? 'אימייל' : 'Email';
+            $lbl_form           = $is_hebrew ? 'טופס' : 'Form';
+            $lbl_source_section = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
+            $lbl_source_col     = $is_hebrew ? 'מקור' : 'Source';
+            $lbl_reco_section   = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
+            $lbl_footer         = $is_hebrew
                 ? 'התמדה בקמפיינים הופכת את הדופק היומי לצמיחה חודשית מצטברת.'
                 : 'Stay consistent with campaigns, and your daily pulse turns into compounding monthly growth.';
 
-            // ---- Helpers ----
             $n = static function ( $arr, $key ) {
                 return isset( $arr[ $key ] ) ? (int) $arr[ $key ] : 0;
             };
-            $trend_badge = function ( $current, $previous ) use ( $lbl_no_change ) {
-                $t     = $this->build_trend_data( $current, $previous );
-                $sign  = $t['delta'] > 0 ? '+' : '';
-                $color = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#60758f' );
+
+            $trend_text = function ( $current, $previous ) use ( $lbl_no_change ) {
+                $t = $this->build_trend_data( $current, $previous );
                 if ( 'flat' === $t['direction'] ) {
-                    return '<span style="color:#60758f;font-size:12px;">' . esc_html( $lbl_no_change ) . '</span>';
+                    return array(
+                        'text'  => $lbl_no_change,
+                        'color' => '#60758f',
+                    );
                 }
-                return '<span style="color:' . esc_attr( $color ) . ';font-size:12px;font-weight:600;">'
-                    . esc_html( $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)' )
-                    . '</span>';
+                $sign = $t['delta'] > 0 ? '+' : '';
+                return array(
+                    'text'  => $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)',
+                    'color' => ( 'down' === $t['direction'] ) ? '#c0392b' : '#1a8a50',
+                );
             };
 
             $rd  = isset( $report['report_day'] ) ? $report['report_day'] : array();
             $mtd = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
             $pmt = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
 
-            // ---- Outer wrapper ----
-            $html  = '<div style="font-family:Segoe UI,Arial,sans-serif;background:#f4f7fb;padding:24px;">';
-            $html .= '<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 8px 28px rgba(25,48,89,0.12);" dir="' . esc_attr( $dir ) . '">';
-
-            // ---- Header ----
-            $html .= '<div style="background:linear-gradient(135deg,#0f5fb7 0%,#27b3a9 100%);padding:22px 26px;color:#ffffff;">';
-            $html .= '<h1 style="margin:0 0 5px;font-size:22px;color:#ffffff;">' . esc_html( $lbl_title ) . '</h1>';
-            $html .= '<p style="margin:0;font-size:13px;opacity:.9;">' . esc_html( $lbl_subtitle ) . ' &mdash; ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</p>';
-            $html .= '<p style="margin:6px 0 0;font-size:12px;opacity:.85;">' . esc_html( $lbl_site . ': ' . $domain ) . '</p>';
-            $html .= '</div>';
-
-            $html .= '<div style="padding:20px 22px 16px;">';
-
-            // ==== SECTION 1 – 2 KPI Boxes ====
             $today_total = $n( $rd, 'total' );
             $mtd_total   = $n( $mtd, 'total' );
             $pmt_total   = $n( $pmt, 'total' );
+            $mtd_trend   = $trend_text( $mtd_total, $pmt_total );
 
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:16px;border-collapse:separate;">';
-            $html .= '<tr>';
-            // Box 1 – Yesterday
-            $html .= '<td style="width:50%;vertical-align:top;">';
-            $html .= '<div style="background:#f5faff;border:1px solid #cce0ff;border-radius:10px;padding:14px 16px;">';
-            $html .= '<div style="font-size:11px;color:#4a5d7a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">' . esc_html( $lbl_yesterday ) . '</div>';
-            $html .= '<div style="font-size:38px;font-weight:700;color:#0f5fb7;line-height:1.1;">' . esc_html( (string) $today_total ) . '</div>';
-            $html .= '</div></td>';
-            // Box 2 – MTD
-            $html .= '<td style="width:50%;vertical-align:top;">';
-            $html .= '<div style="background:#f6fff9;border:1px solid #b8ebd0;border-radius:10px;padding:14px 16px;">';
-            $html .= '<div style="font-size:11px;color:#3a6650;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;">' . esc_html( $lbl_mtd ) . '</div>';
-            $html .= '<div style="font-size:38px;font-weight:700;color:#1a8a50;line-height:1.1;">' . esc_html( (string) $mtd_total ) . '</div>';
-            $html .= '<div style="margin-top:4px;">' . $trend_badge( $mtd_total, $pmt_total ) . ' <span style="font-size:11px;color:#8a9bb0;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
-            $html .= '</div></td>';
+            $align_primary = $is_hebrew ? 'right' : 'left';
+
+            $html  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;" dir="' . esc_attr( $dir ) . '">';
+            $html .= '<tr><td align="center" style="padding:20px 8px;">';
+            $html .= '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#ffffff;border:1px solid #dbe4ef;">';
+
+            $html .= '<tr><td style="background:#0f5fb7;padding:18px 20px;color:#ffffff;">';
+            $html .= '<div style="font-size:24px;line-height:28px;font-weight:bold;margin:0 0 6px 0;color:#ffffff;">' . esc_html( $lbl_title ) . '</div>';
+            $html .= '<div style="font-size:13px;line-height:18px;color:#eaf2ff;">' . esc_html( $lbl_subtitle ) . ' - ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</div>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:#d7e6ff;margin-top:6px;">' . esc_html( $lbl_site . ': ' . $domain ) . '</div>';
+            $html .= '</td></tr>';
+
+            $html .= '<tr><td style="padding:16px 16px 8px 16px;">';
+
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
+            $html .= '<td width="50%" valign="top" style="padding:0 5px 10px 0;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cce0ff;background:#f5faff;"><tr><td style="padding:12px 14px;">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:42px;line-height:44px;font-weight:bold;color:#0f5fb7;margin-top:4px;">' . esc_html( (string) $today_total ) . '</div>';
+            $html .= '</td></tr></table>';
+            $html .= '</td>';
+            $html .= '<td width="50%" valign="top" style="padding:0 0 10px 5px;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #b8ebd0;background:#f6fff9;"><tr><td style="padding:12px 14px;">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#3a6650;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:42px;line-height:44px;font-weight:bold;color:#1a8a50;margin-top:4px;">' . esc_html( (string) $mtd_total ) . '</div>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $mtd_trend['color'] ) . ';font-weight:bold;margin-top:5px;">' . esc_html( $mtd_trend['text'] ) . ' <span style="color:#8a9bb0;font-weight:normal;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
+            $html .= '</td></tr></table>';
+            $html .= '</td>';
             $html .= '</tr></table>';
 
-            // ==== SECTION 2 – 4 Lead-Type Boxes ====
             $types = array(
-                'phone'       => array( 'label' => $lbl_phone,      'icon' => '📞' ),
-                'whatsapp'    => array( 'label' => $lbl_whatsapp,   'icon' => '💬' ),
-                'form_submit' => array( 'label' => $lbl_form,       'icon' => '📋' ),
-                'email'       => array( 'label' => $lbl_email_type, 'icon' => '✉️' ),
+                'phone'       => $lbl_phone,
+                'whatsapp'    => $lbl_whatsapp,
+                'form_submit' => $lbl_form,
+                'email'       => $lbl_email_type,
             );
 
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="6" style="margin-bottom:16px;border-collapse:separate;">';
-            $pairs = array_chunk( array_keys( $types ), 2 );
-            foreach ( $pairs as $pair ) {
+            $type_keys = array_keys( $types );
+            $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
+            for ( $i = 0; $i < count( $type_keys ); $i += 2 ) {
                 $html .= '<tr>';
-                foreach ( $pair as $type_key ) {
-                    $type_cfg  = $types[ $type_key ];
-                    $day_val   = $n( $rd, $type_key );
-                    $mtd_val   = $n( $mtd, $type_key );
-                    $pmt_val   = $n( $pmt, $type_key );
-                    $html .= '<td style="width:50%;vertical-align:top;">';
-                    $html .= '<div style="background:#fafbfd;border:1px solid #e4ebf4;border-radius:10px;padding:12px 14px;">';
-                    $html .= '<div style="font-size:12px;font-weight:600;color:#1a3252;margin-bottom:6px;">' . esc_html( $type_cfg['icon'] . ' ' . $type_cfg['label'] ) . '</div>';
-                    $html .= '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
-                    $html .= '<div><div style="font-size:10px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
-                    $html .= '<div style="font-size:20px;font-weight:700;color:#0f5fb7;">' . esc_html( (string) $day_val ) . '</div></div>';
-                    $html .= '<div><div style="font-size:10px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
-                    $html .= '<div style="font-size:20px;font-weight:700;color:#1a8a50;">' . esc_html( (string) $mtd_val ) . '</div>';
-                    $html .= '<div style="margin-top:2px;">' . $trend_badge( $mtd_val, $pmt_val ) . '</div></div>';
-                    $html .= '</div>';
-                    $html .= '</div></td>';
-                }
-                // Pad odd row.
-                if ( 1 === count( $pair ) ) {
-                    $html .= '<td style="width:50%;"></td>';
+                for ( $j = 0; $j < 2; $j++ ) {
+                    $idx = $i + $j;
+                    if ( ! isset( $type_keys[ $idx ] ) ) {
+                        $html .= '<td width="50%" style="padding:0 5px 10px 5px;">&nbsp;</td>';
+                        continue;
+                    }
+                    $k     = $type_keys[ $idx ];
+                    $label = $types[ $k ];
+                    $day   = $n( $rd, $k );
+                    $mtd_v = $n( $mtd, $k );
+                    $pmt_v = $n( $pmt, $k );
+                    $trend = $trend_text( $mtd_v, $pmt_v );
+
+                    $pad_left  = 0 === $j ? '0' : '5px';
+                    $pad_right = 0 === $j ? '5px' : '0';
+                    $html     .= '<td width="50%" valign="top" style="padding:0 ' . $pad_right . ' 10px ' . $pad_left . ';">';
+                    $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;"><tr><td style="padding:10px 12px;">';
+                    $html     .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:8px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+                    $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
+                    $html     .= '<td width="50%" valign="top" style="text-align:' . esc_attr( $align_primary ) . ';">';
+                    $html     .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
+                    $html     .= '<div style="font-size:22px;line-height:24px;font-weight:bold;color:#0f5fb7;">' . esc_html( (string) $day ) . '</div>';
+                    $html     .= '</td>';
+                    $html     .= '<td width="50%" valign="top" style="text-align:' . esc_attr( $align_primary ) . ';">';
+                    $html     .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
+                    $html     .= '<div style="font-size:22px;line-height:24px;font-weight:bold;color:#1a8a50;">' . esc_html( (string) $mtd_v ) . '</div>';
+                    $html     .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;">' . esc_html( $trend['text'] ) . '</div>';
+                    $html     .= '</td>';
+                    $html     .= '</tr></table>';
+                    $html     .= '</td></tr></table>';
+                    $html     .= '</td>';
                 }
                 $html .= '</tr>';
             }
             $html .= '</table>';
 
-            // ==== SECTION 3 – Sources Table ====
             $sources_table = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
-
-            $html .= '<div style="font-size:13px;font-weight:600;color:#1a3252;margin-bottom:6px;">' . esc_html( $lbl_source_section ) . '</div>';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font-size:12px;margin-bottom:16px;">';
-            $html .= '<tr style="background:#f0f4fb;">';
-            $html .= '<th style="text-align:' . ( $is_hebrew ? 'right' : 'left' ) . ';padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_source_col ) . '</th>';
-            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_yesterday ) . '</th>';
-            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_mtd ) . '</th>';
-            $html .= '<th style="text-align:center;padding:7px 10px;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_vs_prev ) . '</th>';
-            $html .= '</tr>';
+            $html         .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border:1px solid #dde5f0;">';
+            $html         .= '<tr><td colspan="4" style="padding:10px 10px 8px 10px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_source_section ) . '</td></tr>';
+            $html         .= '<tr style="background:#f0f4fb;">';
+            $html         .= '<th style="padding:8px 10px;text-align:' . esc_attr( $align_primary ) . ';font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_source_col ) . '</th>';
+            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_yesterday ) . '</th>';
+            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_mtd ) . '</th>';
+            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_vs_prev ) . '</th>';
+            $html         .= '</tr>';
 
             if ( empty( $sources_table ) ) {
-                $html .= '<tr><td colspan="4" style="padding:8px 10px;color:#8a9bb0;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
+                $html .= '<tr><td colspan="4" style="padding:10px;color:#8a9bb0;font-size:12px;line-height:16px;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
             } else {
                 $row_idx = 0;
                 foreach ( $sources_table as $sk => $row ) {
-                    $bg = ( 0 === $row_idx % 2 ) ? '#ffffff' : '#f9fbfd';
-                    $t  = isset( $row['trend'] ) ? $row['trend'] : array( 'direction' => 'flat', 'delta' => 0, 'pct' => 0 );
-                    $sign  = $t['delta'] > 0 ? '+' : '';
-                    $color = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#8a9bb0' );
-                    $trend_text = 'flat' === $t['direction'] ? $lbl_no_change : $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)';
-                    $html .= '<tr style="background:' . esc_attr( $bg ) . ';">';
-                    $html .= '<td style="padding:7px 10px;border-bottom:1px solid #f0f4f8;">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
-                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;">' . esc_html( (string) $row['day'] ) . '</td>';
-                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;font-weight:700;">' . esc_html( (string) $row['mtd'] ) . '</td>';
-                    $html .= '<td style="padding:7px 10px;text-align:center;border-bottom:1px solid #f0f4f8;color:' . esc_attr( $color ) . ';font-weight:600;">' . esc_html( $trend_text ) . '</td>';
-                    $html .= '</tr>';
+                    $bg         = ( 0 === $row_idx % 2 ) ? '#ffffff' : '#f9fbfd';
+                    $t          = isset( $row['trend'] ) ? $row['trend'] : array( 'direction' => 'flat', 'delta' => 0, 'pct' => 0 );
+                    $sign       = $t['delta'] > 0 ? '+' : '';
+                    $trend_col  = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#8a9bb0' );
+                    $trend_val  = 'flat' === $t['direction'] ? $lbl_no_change : $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)';
+                    $html      .= '<tr style="background:' . esc_attr( $bg ) . ';">';
+                    $html      .= '<td style="padding:8px 10px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
+                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;text-align:center;">' . esc_html( (string) $row['day'] ) . '</td>';
+                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . esc_html( (string) $row['mtd'] ) . '</td>';
+                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;font-weight:bold;color:' . esc_attr( $trend_col ) . ';text-align:center;">' . esc_html( $trend_val ) . '</td>';
+                    $html      .= '</tr>';
                     ++$row_idx;
                 }
             }
             $html .= '</table>';
 
-            // ==== SECTION 4 – Recommendations (optional) ====
             if ( ! empty( $settings['enable_recommendations'] ) ) {
                 $recs = $this->build_recommendations( $report, $is_hebrew );
                 if ( ! empty( $recs ) ) {
-                    $html .= '<div style="background:#fffbea;border:1px solid #f0d97a;border-radius:10px;padding:14px 16px;margin-bottom:16px;">';
-                    $html .= '<div style="font-size:13px;font-weight:600;color:#7a5c00;margin-bottom:8px;">&#128161; ' . esc_html( $lbl_reco_section ) . '</div>';
-                    $html .= '<ul style="margin:0;padding-' . ( $is_hebrew ? 'right' : 'left' ) . ':18px;">';
+                    $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border:1px solid #f0d97a;background:#fffbea;">';
+                    $html .= '<tr><td style="padding:10px 12px;font-size:14px;line-height:18px;font-weight:bold;color:#7a5c00;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_reco_section ) . '</td></tr>';
                     foreach ( $recs as $rec ) {
-                        $html .= '<li style="font-size:12px;color:#4a3c00;margin-bottom:5px;">' . esc_html( $rec ) . '</li>';
+                        $html .= '<tr><td style="padding:4px 12px 6px 12px;font-size:12px;line-height:17px;color:#4a3c00;text-align:' . esc_attr( $align_primary ) . ';">- ' . esc_html( $rec ) . '</td></tr>';
                     }
-                    $html .= '</ul></div>';
+                    $html .= '</table>';
                 }
             }
 
-            // ---- Footer ----
-            $html .= '<p style="margin:0 0 4px;font-size:12px;color:#8a9bb0;border-top:1px solid #edf0f5;padding-top:12px;">' . esc_html( $lbl_footer ) . '</p>';
-            $html .= '</div></div></div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;"><tr><td style="padding:10px 2px 0 2px;border-top:1px solid #edf0f5;font-size:12px;line-height:16px;color:#8a9bb0;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_footer ) . '</td></tr></table>';
+
+            $html .= '</td></tr>';
+            $html .= '</table>';
+            $html .= '</td></tr></table>';
 
             return $html;
         }
@@ -1002,227 +1012,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
-         * Build a simple email body for the PDF report email.
-         *
-         * @param array  $report
-         * @param string $attachment_name
-         * @param bool   $is_hebrew
-         * @return string
-         */
-        private function build_daily_report_email_message( $report, $attachment_name, $is_hebrew ) {
-            $title   = $is_hebrew ? 'דוח הלידים היומי מוכן' : 'Your daily lead report is ready';
-            $intro   = $is_hebrew
-                ? 'הדוח מצורף כקובץ PDF כדי להבטיח תצוגה תקינה גם ב-Outlook.'
-                : 'The report is attached as a PDF to keep the layout consistent in Outlook.';
-            $date    = isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' );
-            $site    = $this->get_site_domain();
-            $file    = $is_hebrew ? 'קובץ מצורף' : 'Attached file';
-            $period  = $is_hebrew ? 'תאריך הדוח' : 'Report date';
-            $site_lbl = $is_hebrew ? 'אתר' : 'Site';
-
-            $html  = '<div style="font-family:Segoe UI,Arial,sans-serif;background:#f5f7fb;padding:24px;">';
-            $html .= '<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e4ebf4;border-radius:12px;padding:24px;" dir="' . ( $is_hebrew ? 'rtl' : 'ltr' ) . '">';
-            $html .= '<h1 style="margin:0 0 10px;font-size:22px;color:#1a3252;">' . esc_html( $title ) . '</h1>';
-            $html .= '<p style="margin:0 0 14px;font-size:14px;color:#4a5d7a;">' . esc_html( $intro ) . '</p>';
-            $html .= '<p style="margin:0 0 6px;font-size:13px;color:#60758f;"><strong>' . esc_html( $site_lbl ) . ':</strong> ' . esc_html( $site ) . '</p>';
-            $html .= '<p style="margin:0 0 6px;font-size:13px;color:#60758f;"><strong>' . esc_html( $period ) . ':</strong> ' . esc_html( $date ) . '</p>';
-            $html .= '<p style="margin:0;font-size:13px;color:#60758f;"><strong>' . esc_html( $file ) . ':</strong> ' . esc_html( $attachment_name ) . '</p>';
-            $html .= '</div></div>';
-
-            return $html;
-        }
-
-        /**
-         * Convert text to PDF-safe ASCII.
-         *
-         * @param string $text
-         * @return string
-         */
-        private function pdf_ascii_text( $text ) {
-            $text = remove_accents( (string) $text );
-            $text = str_replace(
-                array( "\r\n", "\r", '—', '–', '…', '"', '"', "'", "'" ),
-                array( "\n", "\n", '-', '-', '...', '"', '"', "'", "'" ),
-                $text
-            );
-            $text = preg_replace( '/[^\x20-\x7E\n]/', '', $text );
-            return trim( (string) $text );
-        }
-
-        /**
-         * Escape text for a PDF content stream.
-         *
-         * @param string $text
-         * @return string
-         */
-        private function pdf_escape_text( $text ) {
-            return str_replace( array( '\\', '(', ')' ), array( '\\\\', '\\(', '\\)' ), (string) $text );
-        }
-
-        /**
-         * Wrap plain text into PDF-safe lines.
-         *
-         * @param string $text
-         * @param int    $width
-         * @return array
-         */
-        private function pdf_wrap_lines( $text, $width = 78 ) {
-            $text = $this->pdf_ascii_text( $text );
-            if ( '' === $text ) {
-                return array( '' );
-            }
-
-            $wrapped = wordwrap( $text, (int) $width, "\n", true );
-            return explode( "\n", $wrapped );
-        }
-
-        /**
-         * Build PDF line content for the report attachment.
-         *
-         * @param array $report
-         * @return array
-         */
-        private function build_daily_report_pdf_lines( $report ) {
-            $domain       = $this->get_site_domain();
-            $report_date  = isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' );
-            $report_day   = isset( $report['report_day'] ) ? $report['report_day'] : array();
-            $mtd_current  = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
-            $mtd_previous = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
-            $sources      = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
-            $recs         = $this->build_recommendations( $report, false );
-
-            $n = static function ( $arr, $key ) {
-                return isset( $arr[ $key ] ) ? (int) $arr[ $key ] : 0;
-            };
-
-            $trend_text = function ( $current, $previous ) {
-                $trend = $this->build_trend_data( $current, $previous );
-                if ( 'flat' === $trend['direction'] ) {
-                    return 'No change';
-                }
-
-                $sign = $trend['delta'] > 0 ? '+' : '';
-                return $sign . $trend['delta'] . ' (' . $sign . $trend['pct'] . '%)';
-            };
-
-            $lines   = array();
-            $lines[] = 'BRN Lead Report';
-            $lines[] = 'Site: ' . $domain;
-            $lines[] = 'Report date: ' . $report_date;
-            $lines[] = '';
-            $lines[] = 'Summary';
-            $lines[] = 'Yesterday total: ' . $n( $report_day, 'total' );
-            $lines[] = 'Month to date total: ' . $n( $mtd_current, 'total' ) . ' | vs prev month: ' . $trend_text( $n( $mtd_current, 'total' ), $n( $mtd_previous, 'total' ) );
-            $lines[] = '';
-            $lines[] = 'Lead Types';
-            $lines[] = 'Phone: Yesterday ' . $n( $report_day, 'phone' ) . ' | MTD ' . $n( $mtd_current, 'phone' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'phone' ), $n( $mtd_previous, 'phone' ) );
-            $lines[] = 'WhatsApp: Yesterday ' . $n( $report_day, 'whatsapp' ) . ' | MTD ' . $n( $mtd_current, 'whatsapp' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'whatsapp' ), $n( $mtd_previous, 'whatsapp' ) );
-            $lines[] = 'Email: Yesterday ' . $n( $report_day, 'email' ) . ' | MTD ' . $n( $mtd_current, 'email' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'email' ), $n( $mtd_previous, 'email' ) );
-            $lines[] = 'Form: Yesterday ' . $n( $report_day, 'form_submit' ) . ' | MTD ' . $n( $mtd_current, 'form_submit' ) . ' | Trend ' . $trend_text( $n( $mtd_current, 'form_submit' ), $n( $mtd_previous, 'form_submit' ) );
-            $lines[] = '';
-            $lines[] = 'Sources';
-
-            if ( empty( $sources ) ) {
-                $lines[] = 'No source data.';
-            } else {
-                foreach ( $sources as $source_key => $row ) {
-                    $label   = $this->pdf_ascii_text( $this->source_label( (string) $source_key ) );
-                    $label   = '' !== $label ? $label : ucfirst( (string) $source_key );
-                    $lines[] = $label . ': Yesterday ' . (int) $row['day'] . ' | MTD ' . (int) $row['mtd'] . ' | Trend ' . $trend_text( (int) $row['mtd'], isset( $row['prev'] ) ? (int) $row['prev'] : 0 );
-                }
-            }
-
-            if ( ! empty( $recs ) ) {
-                $lines[] = '';
-                $lines[] = 'Recommendations';
-                foreach ( $recs as $rec ) {
-                    foreach ( $this->pdf_wrap_lines( '- ' . $rec, 82 ) as $wrapped_line ) {
-                        $lines[] = $wrapped_line;
-                    }
-                }
-            }
-
-            return $lines;
-        }
-
-        /**
-         * Render a simple multi-page text PDF.
-         *
-         * @param array $lines
-         * @return string
-         */
-        private function render_simple_text_pdf( $lines ) {
-            $lines = is_array( $lines ) ? array_values( $lines ) : array();
-            if ( empty( $lines ) ) {
-                return '';
-            }
-
-            $per_page = 42;
-            $pages    = array_chunk( $lines, $per_page );
-            $font_obj = 3 + ( count( $pages ) * 2 );
-            $objects  = array(
-                1 => '<< /Type /Catalog /Pages 2 0 R >>',
-                2 => '',
-            );
-            $kids     = array();
-
-            foreach ( $pages as $index => $page_lines ) {
-                $page_obj    = 3 + ( $index * 2 );
-                $content_obj = 4 + ( $index * 2 );
-                $kids[]      = $page_obj . ' 0 R';
-
-                $stream = "BT\n/F1 11 Tf\n50 760 Td\n";
-                foreach ( $page_lines as $line_index => $line ) {
-                    if ( $line_index > 0 ) {
-                        $stream .= "0 -16 Td\n";
-                    }
-                    $stream .= '(' . $this->pdf_escape_text( $this->pdf_ascii_text( (string) $line ) ) . ") Tj\n";
-                }
-                $stream .= "ET";
-
-                $objects[ $page_obj ]    = '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ' . $font_obj . ' 0 R >> >> /Contents ' . $content_obj . ' 0 R >>';
-                $objects[ $content_obj ] = "<< /Length " . strlen( $stream ) . " >>\nstream\n" . $stream . "\nendstream";
-            }
-
-            $objects[2]         = '<< /Type /Pages /Count ' . count( $pages ) . ' /Kids [ ' . implode( ' ', $kids ) . ' ] >>';
-            $objects[ $font_obj ] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
-            ksort( $objects );
-
-            $pdf     = "%PDF-1.4\n";
-            $offsets = array( 0 => 0 );
-
-            foreach ( $objects as $number => $body ) {
-                $offsets[ $number ] = strlen( $pdf );
-                $pdf               .= $number . " 0 obj\n" . $body . "\nendobj\n";
-            }
-
-            $xref_offset = strlen( $pdf );
-            $pdf        .= 'xref' . "\n";
-            $pdf        .= '0 ' . ( max( array_keys( $objects ) ) + 1 ) . "\n";
-            $pdf        .= "0000000000 65535 f \n";
-
-            for ( $i = 1; $i <= max( array_keys( $objects ) ); $i++ ) {
-                $offset = isset( $offsets[ $i ] ) ? $offsets[ $i ] : 0;
-                $pdf   .= sprintf( "%010d 00000 n \n", $offset );
-            }
-
-            $pdf .= 'trailer << /Size ' . ( max( array_keys( $objects ) ) + 1 ) . ' /Root 1 0 R >>' . "\n";
-            $pdf .= 'startxref' . "\n" . $xref_offset . "\n%%EOF";
-
-            return $pdf;
-        }
-
-        /**
-         * Build the PDF binary for the report attachment.
-         *
-         * @param array $report
-         * @return string
-         */
-        private function build_daily_report_pdf_binary( $report ) {
-            return $this->render_simple_text_pdf( $this->build_daily_report_pdf_lines( $report ) );
-        }
-
-        /**
          * Send daily report email.
          *
          * @return bool
@@ -1249,8 +1038,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             $report = $this->build_daily_report_payload();
-            $settings = $this->get_settings();
-            $is_hebrew = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
             $domain = $this->get_site_domain();
             $subject = sprintf(
                 '"%s" - BRN Lead count - %s',
@@ -1258,34 +1045,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 isset( $report['report_day_label'] ) ? $report['report_day_label'] : wp_date( 'Y-m-d' )
             );
 
-            $attachment_name = 'brn-lead-report-' . sanitize_file_name( $domain ) . '-' . sanitize_file_name( isset( $report['report_day_label'] ) ? (string) $report['report_day_label'] : wp_date( 'Y-m-d' ) ) . '.pdf';
             $headers = array( 'Content-Type: text/html; charset=UTF-8' );
-            $message = $this->build_daily_report_email_message( $report, $attachment_name, $is_hebrew );
-            $attachments = array();
+            $message = $this->build_daily_report_html( $report );
 
-            $pdf_binary = $this->build_daily_report_pdf_binary( $report );
-            if ( '' !== $pdf_binary ) {
-                $temp_dir = get_temp_dir();
-                if ( ! empty( $temp_dir ) && is_dir( $temp_dir ) && wp_is_writable( $temp_dir ) ) {
-                    $temp_file = trailingslashit( $temp_dir ) . wp_unique_filename( $temp_dir, $attachment_name );
-                    if ( false !== file_put_contents( $temp_file, $pdf_binary ) ) {
-                        $attachments[] = $temp_file;
-                    }
-                }
-            }
-
-            if ( empty( $attachments ) ) {
-                $message = $this->build_daily_report_html( $report );
-            }
-
-            $sent = wp_mail( $emails, $subject, $message, $headers, $attachments );
-
-            foreach ( $attachments as $attachment ) {
-                if ( is_string( $attachment ) && file_exists( $attachment ) ) {
-                    unlink( $attachment );
-                }
-            }
-
+            $sent = wp_mail( $emails, $subject, $message, $headers );
             if ( $sent ) {
                 update_option( self::OPTION_LAST_REPORT_SENT, time(), false );
             }
@@ -1348,7 +1111,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.4.4',
+                '1.4.3',
                 true
             );
 
@@ -1617,7 +1380,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.4.4';
+            $plugin_ver   = '1.4.3';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
