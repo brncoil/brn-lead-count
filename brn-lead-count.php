@@ -733,7 +733,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
-         * Build a styled HTML daily report email.
+         * Build a styled HTML daily report email (Outlook-optimized).
          *
          * @param array $report
          * @return string
@@ -792,34 +792,52 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $align_primary = $is_hebrew ? 'right' : 'left';
 
+            // Outer container.
             $html  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;" dir="' . esc_attr( $dir ) . '">';
             $html .= '<tr><td align="center" style="padding:20px 8px;">';
+
+            // Main email wrapper.
             $html .= '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#ffffff;border:1px solid #dbe4ef;">';
 
-            $html .= '<tr><td style="background:#0f5fb7;padding:18px 20px;color:#ffffff;">';
-            $html .= '<div style="font-size:24px;line-height:28px;font-weight:bold;margin:0 0 6px 0;color:#ffffff;">' . esc_html( $lbl_title ) . '</div>';
+            // Header.
+            $html .= '<tr><td style="background:#0f5fb7;padding:20px 20px;color:#ffffff;">';
+            $html .= '<div style="font-size:26px;line-height:32px;font-weight:bold;margin:0 0 8px 0;color:#ffffff;">' . esc_html( $lbl_title ) . '</div>';
             $html .= '<div style="font-size:13px;line-height:18px;color:#eaf2ff;">' . esc_html( $lbl_subtitle ) . ' - ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</div>';
-            $html .= '<div style="font-size:12px;line-height:16px;color:#d7e6ff;margin-top:6px;">' . esc_html( $lbl_site . ': ' . $domain ) . '</div>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:#d7e6ff;margin-top:8px;">' . esc_html( $lbl_site . ': ' . $domain ) . '</div>';
             $html .= '</td></tr>';
 
-            $html .= '<tr><td style="padding:16px 16px 8px 16px;">';
+            // Top spacing.
+            $html .= '<tr><td height="14" style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>';
 
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
-            $html .= '<td width="50%" valign="top" style="padding:0 5px 10px 0;">';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cce0ff;background:#f5faff;"><tr><td style="padding:12px 14px;">';
-            $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
-            $html .= '<div style="font-size:42px;line-height:44px;font-weight:bold;color:#0f5fb7;margin-top:4px;">' . esc_html( (string) $today_total ) . '</div>';
-            $html .= '</td></tr></table>';
+            // Section 1: KPI boxes (Yesterday & MTD).
+            $html .= '<tr><td style="padding:0 16px;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
+            $html .= '<tr>';
+            $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cce0ff;background:#f5faff;">';
+            $html .= '<tr><td style="padding:16px 14px;">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#0f5fb7;margin-top:8px;">' . esc_html( (string) $today_total ) . '</div>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
             $html .= '</td>';
-            $html .= '<td width="50%" valign="top" style="padding:0 0 10px 5px;">';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #b8ebd0;background:#f6fff9;"><tr><td style="padding:12px 14px;">';
-            $html .= '<div style="font-size:11px;line-height:14px;color:#3a6650;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
-            $html .= '<div style="font-size:42px;line-height:44px;font-weight:bold;color:#1a8a50;margin-top:4px;">' . esc_html( (string) $mtd_total ) . '</div>';
-            $html .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $mtd_trend['color'] ) . ';font-weight:bold;margin-top:5px;">' . esc_html( $mtd_trend['text'] ) . ' <span style="color:#8a9bb0;font-weight:normal;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
-            $html .= '</td></tr></table>';
+            $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #b8ebd0;background:#f6fff9;">';
+            $html .= '<tr><td style="padding:16px 14px;">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#3a6650;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#1a8a50;margin-top:8px;">' . esc_html( (string) $mtd_total ) . '</div>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $mtd_trend['color'] ) . ';font-weight:bold;margin-top:8px;">' . esc_html( $mtd_trend['text'] ) . '<br/><span style="color:#8a9bb0;font-weight:normal;font-size:11px;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
             $html .= '</td>';
-            $html .= '</tr></table>';
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
 
+            // Spacing between sections.
+            $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
+
+            // Section 2: Lead type boxes (Phone, WhatsApp, Email, Form).
             $types = array(
                 'phone'       => $lbl_phone,
                 'whatsapp'    => $lbl_whatsapp,
@@ -828,57 +846,161 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             );
 
             $type_keys = array_keys( $types );
-            $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
-            for ( $i = 0; $i < count( $type_keys ); $i += 2 ) {
-                $html .= '<tr>';
-                for ( $j = 0; $j < 2; $j++ ) {
-                    $idx = $i + $j;
-                    if ( ! isset( $type_keys[ $idx ] ) ) {
-                        $html .= '<td width="50%" style="padding:0 5px 10px 5px;">&nbsp;</td>';
-                        continue;
-                    }
-                    $k     = $type_keys[ $idx ];
-                    $label = $types[ $k ];
-                    $day   = $n( $rd, $k );
-                    $mtd_v = $n( $mtd, $k );
-                    $pmt_v = $n( $pmt, $k );
-                    $trend = $trend_text( $mtd_v, $pmt_v );
 
-                    $pad_left  = 0 === $j ? '0' : '5px';
-                    $pad_right = 0 === $j ? '5px' : '0';
-                    $html     .= '<td width="50%" valign="top" style="padding:0 ' . $pad_right . ' 10px ' . $pad_left . ';">';
-                    $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;"><tr><td style="padding:10px 12px;">';
-                    $html     .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:8px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
-                    $html     .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
-                    $html     .= '<td width="50%" valign="top" style="text-align:' . esc_attr( $align_primary ) . ';">';
-                    $html     .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_yesterday ) . '</div>';
-                    $html     .= '<div style="font-size:22px;line-height:24px;font-weight:bold;color:#0f5fb7;">' . esc_html( (string) $day ) . '</div>';
-                    $html     .= '</td>';
-                    $html     .= '<td width="50%" valign="top" style="text-align:' . esc_attr( $align_primary ) . ';">';
-                    $html     .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;">' . esc_html( $lbl_mtd ) . '</div>';
-                    $html     .= '<div style="font-size:22px;line-height:24px;font-weight:bold;color:#1a8a50;">' . esc_html( (string) $mtd_v ) . '</div>';
-                    $html     .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;">' . esc_html( $trend['text'] ) . '</div>';
-                    $html     .= '</td>';
-                    $html     .= '</tr></table>';
-                    $html     .= '</td></tr></table>';
-                    $html     .= '</td>';
-                }
-                $html .= '</tr>';
-            }
+            // First row (Phone & WhatsApp).
+            $html .= '<tr><td style="padding:0 16px;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
+            $html .= '<tr>';
+
+            // Phone box.
+            $k     = $type_keys[0];
+            $label = $types[ $k ];
+            $day   = $n( $rd, $k );
+            $mtd_v = $n( $mtd, $k );
+            $pmt_v = $n( $pmt, $k );
+            $trend = $trend_text( $mtd_v, $pmt_v );
+
+            $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
+            $html .= '<tr><td style="padding:14px 14px;">';
+            $html .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:12px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
+            $html .= '<tr>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( (string) $day ) . '</div>';
+            $html .= '</td>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( (string) $mtd_v ) . '</div>';
+            $html .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+            $html .= '</td>';
+            $html .= '</tr>';
             $html .= '</table>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
+            $html .= '</td>';
 
+            // WhatsApp box.
+            $k     = $type_keys[1];
+            $label = $types[ $k ];
+            $day   = $n( $rd, $k );
+            $mtd_v = $n( $mtd, $k );
+            $pmt_v = $n( $pmt, $k );
+            $trend = $trend_text( $mtd_v, $pmt_v );
+
+            $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
+            $html .= '<tr><td style="padding:14px 14px;">';
+            $html .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:12px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
+            $html .= '<tr>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( (string) $day ) . '</div>';
+            $html .= '</td>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( (string) $mtd_v ) . '</div>';
+            $html .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+            $html .= '</td>';
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
+            $html .= '</td>';
+
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
+
+            // Spacing between rows.
+            $html .= '<tr><td height="14" style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>';
+
+            // Second row (Email & Form).
+            $html .= '<tr><td style="padding:0 16px;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
+            $html .= '<tr>';
+
+            // Email box.
+            $k     = $type_keys[3];
+            $label = $types[ $k ];
+            $day   = $n( $rd, $k );
+            $mtd_v = $n( $mtd, $k );
+            $pmt_v = $n( $pmt, $k );
+            $trend = $trend_text( $mtd_v, $pmt_v );
+
+            $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
+            $html .= '<tr><td style="padding:14px 14px;">';
+            $html .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:12px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
+            $html .= '<tr>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( (string) $day ) . '</div>';
+            $html .= '</td>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( (string) $mtd_v ) . '</div>';
+            $html .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+            $html .= '</td>';
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
+            $html .= '</td>';
+
+            // Form box.
+            $k     = $type_keys[2];
+            $label = $types[ $k ];
+            $day   = $n( $rd, $k );
+            $mtd_v = $n( $mtd, $k );
+            $pmt_v = $n( $pmt, $k );
+            $trend = $trend_text( $mtd_v, $pmt_v );
+
+            $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
+            $html .= '<tr><td style="padding:14px 14px;">';
+            $html .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:12px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
+            $html .= '<tr>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( (string) $day ) . '</div>';
+            $html .= '</td>';
+            $html .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
+            $html .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( (string) $mtd_v ) . '</div>';
+            $html .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+            $html .= '</td>';
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
+            $html .= '</table>';
+            $html .= '</td>';
+
+            $html .= '</tr>';
+            $html .= '</table>';
+            $html .= '</td></tr>';
+
+            // Spacing before sources table.
+            $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
+
+            // Section 3: Sources table.
             $sources_table = isset( $report['sources_table'] ) && is_array( $report['sources_table'] ) ? $report['sources_table'] : array();
-            $html         .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:4px;border:1px solid #dde5f0;">';
-            $html         .= '<tr><td colspan="4" style="padding:10px 10px 8px 10px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_source_section ) . '</td></tr>';
-            $html         .= '<tr style="background:#f0f4fb;">';
-            $html         .= '<th style="padding:8px 10px;text-align:' . esc_attr( $align_primary ) . ';font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_source_col ) . '</th>';
-            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_yesterday ) . '</th>';
-            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_mtd ) . '</th>';
-            $html         .= '<th style="padding:8px 6px;text-align:center;font-size:12px;line-height:16px;color:#3e4f66;border-top:1px solid #dde5f0;border-bottom:1px solid #dde5f0;">' . esc_html( $lbl_vs_prev ) . '</th>';
+            $html         .= '<tr><td style="padding:0 16px;">';
+            $html         .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dde5f0;background:#ffffff;">';
+            $html         .= '<tr><td colspan="4" style="padding:14px 14px 12px 14px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_source_section ) . '</td></tr>';
+            $html         .= '<tr style="background:#f0f4fb;border-bottom:1px solid #dde5f0;">';
+            $html         .= '<th style="padding:10px 12px;text-align:' . esc_attr( $align_primary ) . ';font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_source_col ) . '</th>';
+            $html         .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</th>';
+            $html         .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</th>';
+            $html         .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_vs_prev ) . '</th>';
             $html         .= '</tr>';
 
             if ( empty( $sources_table ) ) {
-                $html .= '<tr><td colspan="4" style="padding:10px;color:#8a9bb0;font-size:12px;line-height:16px;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
+                $html .= '<tr><td colspan="4" style="padding:12px 14px;color:#8a9bb0;font-size:12px;line-height:16px;">' . esc_html__( 'No source data.', 'brn-lead-count' ) . '</td></tr>';
             } else {
                 $row_idx = 0;
                 foreach ( $sources_table as $sk => $row ) {
@@ -887,32 +1009,45 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                     $sign       = $t['delta'] > 0 ? '+' : '';
                     $trend_col  = 'down' === $t['direction'] ? '#c0392b' : ( 'up' === $t['direction'] ? '#1a8a50' : '#8a9bb0' );
                     $trend_val  = 'flat' === $t['direction'] ? $lbl_no_change : $sign . $t['delta'] . ' (' . $sign . $t['pct'] . '%)';
-                    $html      .= '<tr style="background:' . esc_attr( $bg ) . ';">';
-                    $html      .= '<td style="padding:8px 10px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
-                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;text-align:center;">' . esc_html( (string) $row['day'] ) . '</td>';
-                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . esc_html( (string) $row['mtd'] ) . '</td>';
-                    $html      .= '<td style="padding:8px 6px;border-bottom:1px solid #edf2f8;font-size:12px;line-height:16px;font-weight:bold;color:' . esc_attr( $trend_col ) . ';text-align:center;">' . esc_html( $trend_val ) . '</td>';
+                    $html      .= '<tr style="background:' . esc_attr( $bg ) . ';border-bottom:1px solid #edf2f8;">';
+                    $html      .= '<td style="padding:10px 12px;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
+                    $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;">' . esc_html( (string) $row['day'] ) . '</td>';
+                    $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . esc_html( (string) $row['mtd'] ) . '</td>';
+                    $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;font-weight:bold;color:' . esc_attr( $trend_col ) . ';text-align:center;">' . esc_html( $trend_val ) . '</td>';
                     $html      .= '</tr>';
                     ++$row_idx;
                 }
             }
             $html .= '</table>';
+            $html .= '</td></tr>';
 
+            // Spacing before recommendations.
+            $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
+
+            // Section 4: Recommendations (optional).
             if ( ! empty( $settings['enable_recommendations'] ) ) {
                 $recs = $this->build_recommendations( $report, $is_hebrew );
                 if ( ! empty( $recs ) ) {
-                    $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;border:1px solid #f0d97a;background:#fffbea;">';
-                    $html .= '<tr><td style="padding:10px 12px;font-size:14px;line-height:18px;font-weight:bold;color:#7a5c00;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_reco_section ) . '</td></tr>';
+                    $html .= '<tr><td style="padding:0 16px;">';
+                    $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #f0d97a;background:#fffbea;">';
+                    $html .= '<tr><td style="padding:14px 14px;font-size:14px;line-height:18px;font-weight:bold;color:#7a5c00;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_reco_section ) . '</td></tr>';
                     foreach ( $recs as $rec ) {
-                        $html .= '<tr><td style="padding:4px 12px 6px 12px;font-size:12px;line-height:17px;color:#4a3c00;text-align:' . esc_attr( $align_primary ) . ';">- ' . esc_html( $rec ) . '</td></tr>';
+                        $html .= '<tr><td style="padding:6px 14px 8px 14px;font-size:12px;line-height:16px;color:#4a3c00;text-align:' . esc_attr( $align_primary ) . ';">• ' . esc_html( $rec ) . '</td></tr>';
                     }
                     $html .= '</table>';
+                    $html .= '</td></tr>';
+
+                    // Spacing after recommendations.
+                    $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
                 }
             }
 
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:12px;"><tr><td style="padding:10px 2px 0 2px;border-top:1px solid #edf0f5;font-size:12px;line-height:16px;color:#8a9bb0;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_footer ) . '</td></tr></table>';
-
+            // Footer.
+            $html .= '<tr><td style="padding:0 16px 16px 16px;">';
+            $html .= '<div style="padding:12px 12px;border-top:1px solid #edf0f5;font-size:12px;line-height:16px;color:#8a9bb0;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_footer ) . '</div>';
             $html .= '</td></tr>';
+
+            // Close main wrapper.
             $html .= '</table>';
             $html .= '</td></tr></table>';
 
