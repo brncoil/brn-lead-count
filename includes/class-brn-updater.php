@@ -160,7 +160,7 @@ if ( ! class_exists( 'BRN_Updater' ) ) {
 		 * @return array|false
 		 */
 		private function fetch_and_cache() {
-			$url = 'https://api.github.com/repos/' . self::GITHUB_REPO . '/releases/latest';
+			$url = 'https://api.github.com/repos/' . self::GITHUB_REPO . '/releases?per_page=20';
 
 			$response = wp_remote_get(
 				$url,
@@ -187,15 +187,39 @@ if ( ! class_exists( 'BRN_Updater' ) ) {
 			}
 
 			$body = json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( json_last_error() !== JSON_ERROR_NONE || empty( $body['tag_name'] ) ) {
+			if ( json_last_error() !== JSON_ERROR_NONE || empty( $body ) || ! is_array( $body ) ) {
 				$this->record_error( 'Could not parse GitHub API response.' );
+				return false;
+			}
+
+			$selected_release = null;
+			$selected_version = '';
+
+			foreach ( $body as $release ) {
+				if ( ! is_array( $release ) || empty( $release['tag_name'] ) ) {
+					continue;
+				}
+
+				if ( ! empty( $release['draft'] ) || ! empty( $release['prerelease'] ) ) {
+					continue;
+				}
+
+				$version = ltrim( (string) $release['tag_name'], 'vV' );
+				if ( '' === $selected_version || version_compare( $version, $selected_version, '>' ) ) {
+					$selected_version = $version;
+					$selected_release = $release;
+				}
+			}
+
+			if ( empty( $selected_release ) ) {
+				$this->record_error( 'No valid stable release found on GitHub.' );
 				return false;
 			}
 
 			// Find the installable ZIP asset attached to the release.
 			$zip_url = '';
-			if ( ! empty( $body['assets'] ) && is_array( $body['assets'] ) ) {
-				foreach ( $body['assets'] as $asset ) {
+			if ( ! empty( $selected_release['assets'] ) && is_array( $selected_release['assets'] ) ) {
+				foreach ( $selected_release['assets'] as $asset ) {
 					if ( isset( $asset['browser_download_url'] ) && substr( $asset['browser_download_url'], -4 ) === '.zip' ) {
 						$zip_url = $asset['browser_download_url'];
 						break;
@@ -205,15 +229,15 @@ if ( ! class_exists( 'BRN_Updater' ) ) {
 
 			// Fall back to the GitHub-generated source ZIP if no dedicated asset found.
 			if ( empty( $zip_url ) ) {
-				$zip_url = 'https://github.com/' . self::GITHUB_REPO . '/archive/refs/tags/' . rawurlencode( $body['tag_name'] ) . '.zip';
+				$zip_url = 'https://github.com/' . self::GITHUB_REPO . '/archive/refs/tags/' . rawurlencode( $selected_release['tag_name'] ) . '.zip';
 			}
 
 			$info = array(
 				'name'         => 'BRN Lead Count',
-				'version'      => ltrim( $body['tag_name'], 'vV' ),
+				'version'      => $selected_version,
 				'download_url' => $zip_url,
-				'changelog'    => ! empty( $body['body'] ) ? wp_kses_post( $body['body'] ) : '',
-				'published_at' => isset( $body['published_at'] ) ? $body['published_at'] : '',
+				'changelog'    => ! empty( $selected_release['body'] ) ? wp_kses_post( $selected_release['body'] ) : '',
+				'published_at' => isset( $selected_release['published_at'] ) ? $selected_release['published_at'] : '',
 			);
 
 			update_option( self::OPT_CACHE, $info, false );
