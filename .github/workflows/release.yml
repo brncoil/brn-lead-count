@@ -68,3 +68,4 @@ jobs:
           files: ${{ env.ZIP_NAME }}
           draft: false
           prerelease: false
+          make_latest: true
