@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.5.2
+ * Version: 1.5.4
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -170,6 +170,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'test_ips'       => '',
                 'report_emails'  => '',
                 'report_send_time'         => '09:00',
+                'report_same_day_mode'     => 0,
                 'report_language'          => 'en',
                 'enable_recommendations'   => 0,
             );
@@ -183,6 +184,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $settings['test_ips'] = isset( $settings['test_ips'] ) ? (string) $settings['test_ips'] : '';
             $settings['report_emails'] = isset( $settings['report_emails'] ) ? (string) $settings['report_emails'] : '';
             $settings['report_send_time'] = isset( $settings['report_send_time'] ) ? (string) $settings['report_send_time'] : '09:00';
+            $settings['report_same_day_mode'] = empty( $settings['report_same_day_mode'] ) ? 0 : 1;
             $settings['report_language']        = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] ) ? 'he' : 'en';
             $settings['enable_recommendations'] = empty( $settings['enable_recommendations'] ) ? 0 : 1;
 
@@ -464,6 +466,20 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
+         * Resolve actual send time based on configured mode.
+         *
+         * @param array $settings
+         * @return string
+         */
+        private function get_effective_report_send_time( $settings ) {
+            if ( ! empty( $settings['report_same_day_mode'] ) ) {
+                return '19:00';
+            }
+
+            return isset( $settings['report_send_time'] ) ? (string) $settings['report_send_time'] : '09:00';
+        }
+
+        /**
          * Ensure daily report cron timing matches configured settings.
          *
          * @return void
@@ -473,8 +489,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return;
             }
 
-            $settings = $this->get_settings();
-            $hash     = (string) $settings['report_send_time'];
+            $settings            = $this->get_settings();
+            $effective_send_time = $this->get_effective_report_send_time( $settings );
+            $hash                = (string) $effective_send_time . '|' . ( ! empty( $settings['report_same_day_mode'] ) ? '1' : '0' );
 
             $stored_hash = (string) get_option( self::OPTION_REPORT_SCHEDULE_HASH, '' );
             $next        = wp_next_scheduled( 'brn_lead_count_daily_report_event' );
@@ -484,7 +501,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             wp_clear_scheduled_hook( 'brn_lead_count_daily_report_event' );
-            wp_schedule_event( $this->get_next_report_timestamp( $settings['report_send_time'] ), 'daily', 'brn_lead_count_daily_report_event' );
+            wp_schedule_event( $this->get_next_report_timestamp( $effective_send_time ), 'daily', 'brn_lead_count_daily_report_event' );
             update_option( self::OPTION_REPORT_SCHEDULE_HASH, $hash, false );
         }
 
@@ -578,7 +595,20 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $query = wp_parse_url( $url, PHP_URL_QUERY );
             if ( ! empty( $query ) ) {
                 parse_str( (string) $query, $params );
-                foreach ( array( 'utm_source', 'source', 'src', 'ref' ) as $key ) {
+
+                // When utm_source is present build a composite source/medium/campaign value.
+                if ( ! empty( $params['utm_source'] ) ) {
+                    $parts = array( (string) $params['utm_source'] );
+                    if ( ! empty( $params['utm_medium'] ) ) {
+                        $parts[] = (string) $params['utm_medium'];
+                    }
+                    if ( ! empty( $params['utm_campaign'] ) ) {
+                        $parts[] = (string) $params['utm_campaign'];
+                    }
+                    return implode( '/', $parts );
+                }
+
+                foreach ( array( 'source', 'src', 'ref' ) as $key ) {
                     if ( ! empty( $params[ $key ] ) ) {
                         return (string) $params[ $key ];
                     }
@@ -597,14 +627,14 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         private function normalize_source( $source ) {
             $source = strtolower( trim( (string) $source ) );
             $source = preg_replace( '/\s+/', '-', $source );
-            $source = preg_replace( '/[^a-z0-9_\-.]/', '', (string) $source );
+            $source = preg_replace( '/[^a-z0-9_\-.\/]/', '', (string) $source );
             $source = trim( (string) $source, '-.' );
 
             if ( '' === $source ) {
                 return 'direct';
             }
 
-            return substr( $source, 0, 80 );
+            return substr( $source, 0, 120 );
         }
 
         /**
@@ -631,22 +661,39 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         private function build_daily_report_payload( $reference_ts = null ) {
             $stats = get_option( self::OPTION_STATS, $this->get_empty_stats() );
             $logs  = isset( $stats['logs'] ) && is_array( $stats['logs'] ) ? $stats['logs'] : array();
+            $settings = $this->get_settings();
+            $use_same_day_mode = ! empty( $settings['report_same_day_mode'] );
 
             $tz  = wp_timezone();
             $now = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : time() ) );
             $now = $now->setTimezone( $tz );
 
-            // Yesterday (the report day).
-            $report_day       = $now->modify( '-1 day' );
-            $report_day_start = $report_day->setTime( 0, 0, 0 );
-            $report_day_end   = $report_day->setTime( 23, 59, 59 );
+            if ( $use_same_day_mode ) {
+                // Same-day mode: report from current local day start until send time (now).
+                $report_day       = $now;
+                $report_day_start = $report_day->setTime( 0, 0, 0 );
+                $report_day_end   = $report_day;
+            } else {
+                // Default mode: yesterday full day.
+                $report_day       = $now->modify( '-1 day' );
+                $report_day_start = $report_day->setTime( 0, 0, 0 );
+                $report_day_end   = $report_day->setTime( 23, 59, 59 );
+            }
 
             // Same calendar day of previous month (for single-day comparison).
             $last_month_day       = $report_day->modify( '-1 month' );
             $last_month_day_start = $last_month_day->setTime( 0, 0, 0 );
-            $last_month_day_end   = $last_month_day->setTime( 23, 59, 59 );
+            if ( $use_same_day_mode ) {
+                $last_month_day_end = $last_month_day->setTime(
+                    (int) $report_day_end->format( 'H' ),
+                    (int) $report_day_end->format( 'i' ),
+                    (int) $report_day_end->format( 's' )
+                );
+            } else {
+                $last_month_day_end = $last_month_day->setTime( 23, 59, 59 );
+            }
 
-            // Month-to-date: first of current month -> yesterday end.
+            // Month-to-date: first of current month -> report end.
             $mtd_start = $now->modify( 'first day of this month' )->setTime( 0, 0, 0 );
             $mtd_end   = $report_day_end;
 
@@ -1246,7 +1293,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.5.2',
+                '1.5.4',
                 true
             );
 
@@ -1515,7 +1562,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.5.2';
+            $plugin_ver   = '1.5.4';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
@@ -1807,6 +1854,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $output['report_send_time'] = isset( $input['report_send_time'] ) && preg_match( '/^\d{2}:\d{2}$/', (string) $input['report_send_time'] )
                 ? (string) $input['report_send_time']
                 : '09:00';
+            $output['report_same_day_mode'] = empty( $input['report_same_day_mode'] ) ? 0 : 1;
             $output['report_language']        = ( isset( $input['report_language'] ) && 'he' === (string) $input['report_language'] ) ? 'he' : 'en';
             $output['enable_recommendations'] = empty( $input['enable_recommendations'] ) ? 0 : 1;
 
@@ -2385,6 +2433,16 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                 <td>
                                     <input type="time" name="<?php echo esc_attr( self::OPTION_SETTINGS ); ?>[report_send_time]" value="<?php echo esc_attr( $settings['report_send_time'] ); ?>" />
                                     <p class="description"><?php esc_html_e( 'Local site time when the daily report is sent.', 'brn-lead-count' ); ?></p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row"><?php esc_html_e( 'Same-Day Report Mode', 'brn-lead-count' ); ?></th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" name="<?php echo esc_attr( self::OPTION_SETTINGS ); ?>[report_same_day_mode]" value="1" <?php checked( 1, isset( $settings['report_same_day_mode'] ) ? (int) $settings['report_same_day_mode'] : 0 ); ?> />
+                                        <?php esc_html_e( 'Send at 19:00 using same-day data (00:00 until 19:00).', 'brn-lead-count' ); ?>
+                                    </label>
+                                    <p class="description"><?php esc_html_e( 'When enabled, daily report time is fixed to 19:00 local site time. When disabled, custom report time + yesterday data are used.', 'brn-lead-count' ); ?></p>
                                 </td>
                             </tr>
                             <tr>

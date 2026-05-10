@@ -10,11 +10,11 @@
 
     function normalizeSource(raw) {
         var source = (raw || '').toString().toLowerCase().trim();
-        source = source.replace(/\s+/g, '-').replace(/[^a-z0-9_.-]/g, '').replace(/^[.-]+|[.-]+$/g, '');
+        source = source.replace(/\s+/g, '-').replace(/[^a-z0-9_.\/\-]/g, '').replace(/^[.\/\-]+|[.\/\-]+$/g, '');
         if (!source) {
             source = 'direct';
         }
-        return source.substring(0, 80);
+        return source.substring(0, 120);
     }
 
     function getLeadSource() {
@@ -23,7 +23,16 @@
             if (typeof URLSearchParams !== 'undefined') {
                 params = new URLSearchParams(window.location.search || '');
             }
-            var keys = ['utm_source', 'source', 'src', 'ref'];
+            var utmSource = params ? params.get('utm_source') : null;
+            if (utmSource && utmSource.trim()) {
+                var parts = [normalizeSource(utmSource)];
+                var utmMedium   = params ? params.get('utm_medium')   : null;
+                var utmCampaign = params ? params.get('utm_campaign') : null;
+                if (utmMedium   && utmMedium.trim())   { parts.push(normalizeSource(utmMedium)); }
+                if (utmCampaign && utmCampaign.trim()) { parts.push(normalizeSource(utmCampaign)); }
+                return parts.join('/');
+            }
+            var keys = ['source', 'src', 'ref'];
             for (var i = 0; i < keys.length; i++) {
                 var key = keys[i];
                 var val = params ? params.get(key) : null;
