@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.5.5
+ * Version: 1.5.6
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -1219,10 +1219,13 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return false;
             }
 
+            $settings = $this->get_settings();
+            $is_hebrew = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
+
             $report = $this->build_daily_report_payload();
             $domain = $this->get_site_domain();
             $subject = sprintf(
-                '"%s" - BRN Lead count - %s',
+                $is_hebrew ? '"%s" - ספירת לידים BRN - %s' : '"%s" - BRN Lead count - %s',
                 $domain,
                 isset( $report['report_day_label'] ) ? $report['report_day_label'] : wp_date( 'Y-m-d' )
             );
@@ -1293,7 +1296,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.5.5',
+                '1.5.6',
                 true
             );
 
@@ -1562,7 +1565,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.5.5';
+            $plugin_ver   = '1.5.6';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
