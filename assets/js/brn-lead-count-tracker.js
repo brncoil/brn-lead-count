@@ -132,6 +132,25 @@
         } catch (e) {}
     }
 
+    function buildFormLabel(form, prefix) {
+        var parts = [];
+        if (prefix) {
+            parts.push(prefix);
+        }
+
+        if (form) {
+            var id = (form.getAttribute('id') || '').trim();
+            var name = (form.getAttribute('name') || '').trim();
+            var action = (form.getAttribute('action') || '').trim();
+
+            if (id) { parts.push('id:' + id); }
+            if (name) { parts.push('name:' + name); }
+            if (action) { parts.push('action:' + action.substring(0, 80)); }
+        }
+
+        return parts.join(' | ');
+    }
+
     // -----------------------------------------------------------------------
     // Link clicks: tel:, mailto:, WhatsApp
     // Only 'click' is used — pointerdown/touchstart also fire during scrolling,
@@ -211,16 +230,7 @@
             return;
         }
 
-        var parts  = [];
-        var id     = (form.getAttribute('id') || '').trim();
-        var name   = (form.getAttribute('name') || '').trim();
-        var action = (form.getAttribute('action') || '').trim();
-
-        if (id)     { parts.push('id:' + id); }
-        if (name)   { parts.push('name:' + name); }
-        if (action) { parts.push('action:' + action.substring(0, 80)); }
-
-        sendLead('form_submit', parts.join(' | '));
+        sendLead('form_submit', buildFormLabel(form, 'native'));
     }, true);
 
     // -----------------------------------------------------------------------
@@ -245,6 +255,32 @@
         sendLead('form_submit', parts.join(' | '));
     }, true);
 
+    // Contact Form 7 dispatches success events on document.
+    document.addEventListener('wpcf7mailsent', function (event) {
+        var detail = event && event.detail ? event.detail : {};
+        var parts = ['cf7'];
+        if (detail.contactFormId) { parts.push('id:' + detail.contactFormId); }
+        if (detail.unitTag) { parts.push('unit:' + detail.unitTag); }
+        sendLead('form_submit', parts.join(' | '));
+    }, true);
+
+    // Custom-event fallbacks used by some AJAX form plugins.
+    document.addEventListener('fluentform_submission_success', function (event) {
+        var detail = event && event.detail ? event.detail : {};
+        var formId = detail.form_id || detail.formId || '';
+        var parts = ['fluent'];
+        if (formId) { parts.push('id:' + formId); }
+        sendLead('form_submit', parts.join(' | '));
+    }, true);
+
+    document.addEventListener('forminator:form:submit:success', function (event) {
+        var detail = event && event.detail ? event.detail : {};
+        var formId = detail.form_id || detail.formId || '';
+        var parts = ['forminator'];
+        if (formId) { parts.push('id:' + formId); }
+        sendLead('form_submit', parts.join(' | '));
+    }, true);
+
     // jQuery trigger fallback (older Elementor versions).
     if (typeof window.jQuery !== 'undefined') {
         window.jQuery(document).on('submit_success.elementor-forms', function (event, response) {
@@ -257,6 +293,35 @@
 
             var parts = ['elementor'];
             if (formName) { parts.push(formName); }
+            sendLead('form_submit', parts.join(' | '));
+        });
+
+        // WPForms AJAX success.
+        window.jQuery(document).on('wpformsAjaxSubmitSuccess', function (event, formData, form) {
+            var formEl = form && form[0] ? form[0] : null;
+            sendLead('form_submit', buildFormLabel(formEl, 'wpforms'));
+        });
+
+        // Gravity Forms confirmation loaded after successful AJAX submit.
+        window.jQuery(document).on('gform_confirmation_loaded', function (event, formId) {
+            var parts = ['gravity'];
+            if (formId) { parts.push('id:' + formId); }
+            sendLead('form_submit', parts.join(' | '));
+        });
+
+        // Fluent Forms success (common jQuery event pattern).
+        window.jQuery(document).on('fluentform_submission_success', function (event, data) {
+            var formId = data && (data.form_id || data.formId) ? (data.form_id || data.formId) : '';
+            var parts = ['fluent'];
+            if (formId) { parts.push('id:' + formId); }
+            sendLead('form_submit', parts.join(' | '));
+        });
+
+        // Forminator success (custom event used by some installs).
+        window.jQuery(document).on('forminator:form:submit:success', function (event, data) {
+            var formId = data && (data.form_id || data.formId) ? (data.form_id || data.formId) : '';
+            var parts = ['forminator'];
+            if (formId) { parts.push('id:' + formId); }
             sendLead('form_submit', parts.join(' | '));
         });
     }
