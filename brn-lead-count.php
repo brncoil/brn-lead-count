@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: BRN Lead Count
- * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions).
- * Version: 1.5.6
+ * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
+ * Version: 1.7.0
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -74,6 +74,13 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // REST API endpoint — more reliable than admin-ajax.php on cached/proxied hosts (e.g. WP Engine).
             add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
+
+            // WooCommerce: store our richer lead-source classification on the order
+            // at checkout. The Sales dashboard reads orders live from WooCommerce,
+            // so historical orders are included too. These hooks only fire when
+            // WooCommerce is active, so registering them unconditionally is safe.
+            add_action( 'woocommerce_checkout_order_processed', array( $this, 'capture_order_source' ), 10, 1 );
+            add_action( 'woocommerce_store_api_checkout_order_processed', array( $this, 'capture_order_source' ), 10, 1 );
         }
 
         /**
@@ -170,7 +177,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'test_ips'       => '',
                 'report_emails'  => '',
                 'report_send_time'         => '09:00',
-                'report_same_day_mode'     => 0,
                 'report_language'          => 'en',
                 'enable_recommendations'   => 0,
             );
@@ -184,7 +190,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $settings['test_ips'] = isset( $settings['test_ips'] ) ? (string) $settings['test_ips'] : '';
             $settings['report_emails'] = isset( $settings['report_emails'] ) ? (string) $settings['report_emails'] : '';
             $settings['report_send_time'] = isset( $settings['report_send_time'] ) ? (string) $settings['report_send_time'] : '09:00';
-            $settings['report_same_day_mode'] = empty( $settings['report_same_day_mode'] ) ? 0 : 1;
             $settings['report_language']        = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] ) ? 'he' : 'en';
             $settings['enable_recommendations'] = empty( $settings['enable_recommendations'] ) ? 0 : 1;
 
@@ -466,20 +471,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         }
 
         /**
-         * Resolve actual send time based on configured mode.
-         *
-         * @param array $settings
-         * @return string
-         */
-        private function get_effective_report_send_time( $settings ) {
-            if ( ! empty( $settings['report_same_day_mode'] ) ) {
-                return '19:00';
-            }
-
-            return isset( $settings['report_send_time'] ) ? (string) $settings['report_send_time'] : '09:00';
-        }
-
-        /**
          * Ensure daily report cron timing matches configured settings.
          *
          * @return void
@@ -489,9 +480,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return;
             }
 
-            $settings            = $this->get_settings();
-            $effective_send_time = $this->get_effective_report_send_time( $settings );
-            $hash                = (string) $effective_send_time . '|' . ( ! empty( $settings['report_same_day_mode'] ) ? '1' : '0' );
+            $settings = $this->get_settings();
+            $hash     = (string) $settings['report_send_time'];
 
             $stored_hash = (string) get_option( self::OPTION_REPORT_SCHEDULE_HASH, '' );
             $next        = wp_next_scheduled( 'brn_lead_count_daily_report_event' );
@@ -501,7 +491,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             wp_clear_scheduled_hook( 'brn_lead_count_daily_report_event' );
-            wp_schedule_event( $this->get_next_report_timestamp( $effective_send_time ), 'daily', 'brn_lead_count_daily_report_event' );
+            wp_schedule_event( $this->get_next_report_timestamp( $settings['report_send_time'] ), 'daily', 'brn_lead_count_daily_report_event' );
             update_option( self::OPTION_REPORT_SCHEDULE_HASH, $hash, false );
         }
 
@@ -542,6 +532,50 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             return $counts;
+        }
+
+        /**
+         * Count WooCommerce sales (orders + revenue) within a time window.
+         *
+         * Reads orders live from WooCommerce — matching the Sales dashboard — so
+         * the report reflects real processing/completed orders. Returns zeros when
+         * WooCommerce is inactive.
+         *
+         * @param int $start_ts
+         * @param int $end_ts
+         * @return array{orders:int,revenue:float}
+         */
+        private function get_window_sales( $start_ts, $end_ts ) {
+            $result = array(
+                'orders'  => 0,
+                'revenue' => 0.0,
+            );
+
+            if ( ! function_exists( 'wc_get_orders' ) ) {
+                return $result;
+            }
+
+            $orders = wc_get_orders(
+                array(
+                    'status'       => array( 'wc-processing', 'wc-completed' ),
+                    'limit'        => -1,
+                    'date_created' => (int) $start_ts . '...' . (int) $end_ts,
+                    'return'       => 'objects',
+                )
+            );
+            if ( ! is_array( $orders ) ) {
+                return $result;
+            }
+
+            foreach ( $orders as $order ) {
+                if ( ! is_object( $order ) || ! method_exists( $order, 'get_total' ) ) {
+                    continue;
+                }
+                $result['orders']  += 1;
+                $result['revenue'] += (float) $order->get_total();
+            }
+
+            return $result;
         }
 
         /**
@@ -596,19 +630,14 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             if ( ! empty( $query ) ) {
                 parse_str( (string) $query, $params );
 
-                // When utm_source is present build a composite source/medium/campaign value.
-                if ( ! empty( $params['utm_source'] ) ) {
-                    $parts = array( (string) $params['utm_source'] );
-                    if ( ! empty( $params['utm_medium'] ) ) {
-                        $parts[] = (string) $params['utm_medium'];
-                    }
-                    if ( ! empty( $params['utm_campaign'] ) ) {
-                        $parts[] = (string) $params['utm_campaign'];
-                    }
-                    return implode( '/', $parts );
+                // Paid-click detection runs first so PPC traffic is not mistaken
+                // for organic (e.g. a Google Ads click whose referrer is google.com).
+                $paid = $this->classify_paid_source( $params );
+                if ( '' !== $paid ) {
+                    return $paid;
                 }
 
-                foreach ( array( 'source', 'src', 'ref' ) as $key ) {
+                foreach ( array( 'utm_source', 'source', 'src', 'ref' ) as $key ) {
                     if ( ! empty( $params[ $key ] ) ) {
                         return (string) $params[ $key ];
                     }
@@ -616,6 +645,44 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             }
 
             return 'direct';
+        }
+
+        /**
+         * Detect paid-traffic (PPC) sources from URL query parameters.
+         *
+         * Uses ad-network click identifiers — which are present even when no UTM
+         * tags are set (e.g. Google Ads auto-tagging only adds gclid) — plus
+         * explicit paid UTM mediums. Returns a distinct, normalized source label
+         * (e.g. "google-ads") so paid traffic is reported separately from organic,
+         * or '' when the visit is not identifiably paid.
+         *
+         * @param array $params Parsed query parameters.
+         * @return string
+         */
+        private function classify_paid_source( $params ) {
+            $params = is_array( $params ) ? $params : array();
+
+            if ( ! empty( $params['gclid'] ) || ! empty( $params['gbraid'] ) || ! empty( $params['wbraid'] ) ) {
+                return 'google-ads';
+            }
+            if ( ! empty( $params['msclkid'] ) ) {
+                return 'microsoft-ads';
+            }
+            if ( ! empty( $params['fbclid'] ) ) {
+                return 'facebook-ads';
+            }
+
+            $medium       = isset( $params['utm_medium'] ) ? strtolower( trim( (string) $params['utm_medium'] ) ) : '';
+            $paid_mediums = array( 'cpc', 'ppc', 'paid', 'paidsearch', 'paid-search', 'paid_search', 'cpm', 'paid-social', 'paidsocial' );
+            if ( in_array( $medium, $paid_mediums, true ) ) {
+                $src = isset( $params['utm_source'] ) ? strtolower( trim( (string) $params['utm_source'] ) ) : '';
+                if ( '' !== $src ) {
+                    return ( 'ads' === substr( $src, -3 ) ) ? $src : $src . '-ads';
+                }
+                return 'paid';
+            }
+
+            return '';
         }
 
         /**
@@ -627,14 +694,72 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         private function normalize_source( $source ) {
             $source = strtolower( trim( (string) $source ) );
             $source = preg_replace( '/\s+/', '-', $source );
-            $source = preg_replace( '/[^a-z0-9_\-.\/]/', '', (string) $source );
+            $source = preg_replace( '/[^a-z0-9_\-.]/', '', (string) $source );
             $source = trim( (string) $source, '-.' );
 
             if ( '' === $source ) {
                 return 'direct';
             }
 
-            return substr( $source, 0, 120 );
+            // Vulnerability scanners inject SQLi/XSS/command-injection payloads
+            // into the utm_source/source/src/ref params, which would otherwise be
+            // logged and reported as fake "sources". Bucket such non-legitimate
+            // traffic under "other" (kept distinct from genuine Direct) so it is
+            // never stored at capture time and never shown verbatim in the report
+            // or admin views. This single chokepoint covers every read and write
+            // of a source value.
+            if ( $this->is_suspicious_source( $source ) ) {
+                return 'other';
+            }
+
+            return substr( $source, 0, 80 );
+        }
+
+        /**
+         * Detect bot/scanner garbage masquerading as a traffic source.
+         *
+         * Operates on an already-normalized source (lowercase, spaces -> '-').
+         * Genuine sources are short, single-ish tokens (e.g. "google.com",
+         * "google-ads", "newsletter"); injected payloads are long, multi-word, or
+         * carry recognisable attack signatures.
+         *
+         * @param string $source Normalized source value.
+         * @return bool True when the value looks like attack/scanner noise.
+         */
+        private function is_suspicious_source( $source ) {
+            $source = (string) $source;
+            if ( '' === $source ) {
+                return false;
+            }
+
+            // Real campaign sources are short; an injected sentence/payload is not.
+            if ( strlen( $source ) > 40 ) {
+                return true;
+            }
+
+            // Many dash-separated words => a phrase/payload, not a source label.
+            if ( substr_count( $source, '-' ) >= 4 ) {
+                return true;
+            }
+
+            // Signatures of common automated-scanner payloads (SQLi, XSS, command
+            // and template injection, path traversal, OOB callback domains).
+            $needles = array(
+                'select', 'union', 'insert', 'update', 'delete', 'drop', 'from-dual',
+                'sleep', 'benchmark', 'waitfor', 'concat', 'information-schema', 'pg_sleep',
+                'response.write', 'echo', 'print', 'md5', 'eval', 'base64', 'array',
+                'script', 'onerror', 'onload', 'alert', 'javascript', 'iframe', 'svg',
+                'win.ini', 'boot.ini', 'etc-passwd', 'passwd', 'cmd', 'powershell',
+                'bxss', 'r87.me', 'burpcollab', 'oastify', 'interact.sh', 'nslookup',
+                'document.cookie', 'http-equiv',
+            );
+            foreach ( $needles as $needle ) {
+                if ( false !== strpos( $source, $needle ) ) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         /**
@@ -647,6 +772,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $source = $this->normalize_source( $source );
             if ( 'direct' === $source ) {
                 return __( 'Direct', 'brn-lead-count' );
+            }
+            if ( 'other' === $source ) {
+                return __( 'Other', 'brn-lead-count' );
             }
 
             return str_replace( '-', ' ', (string) $source );
@@ -661,39 +789,22 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
         private function build_daily_report_payload( $reference_ts = null ) {
             $stats = get_option( self::OPTION_STATS, $this->get_empty_stats() );
             $logs  = isset( $stats['logs'] ) && is_array( $stats['logs'] ) ? $stats['logs'] : array();
-            $settings = $this->get_settings();
-            $use_same_day_mode = ! empty( $settings['report_same_day_mode'] );
 
             $tz  = wp_timezone();
             $now = new DateTimeImmutable( '@' . ( $reference_ts ? (int) $reference_ts : time() ) );
             $now = $now->setTimezone( $tz );
 
-            if ( $use_same_day_mode ) {
-                // Same-day mode: report from current local day start until send time (now).
-                $report_day       = $now;
-                $report_day_start = $report_day->setTime( 0, 0, 0 );
-                $report_day_end   = $report_day;
-            } else {
-                // Default mode: yesterday full day.
-                $report_day       = $now->modify( '-1 day' );
-                $report_day_start = $report_day->setTime( 0, 0, 0 );
-                $report_day_end   = $report_day->setTime( 23, 59, 59 );
-            }
+            // Yesterday (the report day).
+            $report_day       = $now->modify( '-1 day' );
+            $report_day_start = $report_day->setTime( 0, 0, 0 );
+            $report_day_end   = $report_day->setTime( 23, 59, 59 );
 
             // Same calendar day of previous month (for single-day comparison).
             $last_month_day       = $report_day->modify( '-1 month' );
             $last_month_day_start = $last_month_day->setTime( 0, 0, 0 );
-            if ( $use_same_day_mode ) {
-                $last_month_day_end = $last_month_day->setTime(
-                    (int) $report_day_end->format( 'H' ),
-                    (int) $report_day_end->format( 'i' ),
-                    (int) $report_day_end->format( 's' )
-                );
-            } else {
-                $last_month_day_end = $last_month_day->setTime( 23, 59, 59 );
-            }
+            $last_month_day_end   = $last_month_day->setTime( 23, 59, 59 );
 
-            // Month-to-date: first of current month -> report end.
+            // Month-to-date: first of current month -> yesterday end.
             $mtd_start = $now->modify( 'first day of this month' )->setTime( 0, 0, 0 );
             $mtd_end   = $report_day_end;
 
@@ -737,6 +848,11 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 // MTD windows.
                 'mtd_current'    => $this->get_window_counts( $logs, $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
                 'mtd_prev_month' => $this->get_window_counts( $logs, $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() ),
+                // WooCommerce sales for the same windows (orders + revenue).
+                'sales_enabled'        => function_exists( 'wc_get_orders' ),
+                'sales_report_day'     => $this->get_window_sales( $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
+                'sales_mtd_current'    => $this->get_window_sales( $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
+                'sales_mtd_prev_month' => $this->get_window_sales( $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() ),
                 // Sources.
                 'report_day_sources' => $report_day_sources,
                 'sources_table'      => $sources_table,
@@ -802,6 +918,9 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $lbl_whatsapp       = $is_hebrew ? 'וואטסאפ' : 'WhatsApp';
             $lbl_email_type     = $is_hebrew ? 'אימייל' : 'Email';
             $lbl_form           = $is_hebrew ? 'טופס' : 'Form';
+            $lbl_sales_section  = $is_hebrew ? 'מכירות (WooCommerce)' : 'Sales (WooCommerce)';
+            $lbl_orders         = $is_hebrew ? 'הזמנות' : 'Orders';
+            $lbl_revenue        = $is_hebrew ? 'הכנסה' : 'Revenue';
             $lbl_source_section = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
             $lbl_source_col     = $is_hebrew ? 'מקור' : 'Source';
             $lbl_reco_section   = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
@@ -828,6 +947,19 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 );
             };
 
+            // Money formatter for the sales section (uses the WooCommerce currency
+            // symbol when available; falls back to a plain localized number).
+            $fmt_money = static function ( $amount ) {
+                $amount = (float) $amount;
+                $symbol = function_exists( 'get_woocommerce_currency_symbol' )
+                    ? html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' )
+                    : '';
+                return $symbol . number_format_i18n( $amount, 0 );
+            };
+            $fmt_count = static function ( $amount ) {
+                return number_format_i18n( (int) $amount );
+            };
+
             $rd  = isset( $report['report_day'] ) ? $report['report_day'] : array();
             $mtd = isset( $report['mtd_current'] ) ? $report['mtd_current'] : array();
             $pmt = isset( $report['mtd_prev_month'] ) ? $report['mtd_prev_month'] : array();
@@ -838,6 +970,28 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $mtd_trend   = $trend_text( $mtd_total, $pmt_total );
 
             $align_primary = $is_hebrew ? 'right' : 'left';
+
+            // Reusable Yesterday/MTD stat card (also used by the sales section).
+            // $formatter renders the raw numeric value (count or money).
+            $stat_card = function ( $label, $day_val, $mtd_val, $pmt_val, $formatter ) use ( $align_primary, $lbl_yesterday, $lbl_mtd, $trend_text ) {
+                $trend = $trend_text( (int) round( $mtd_val ), (int) round( $pmt_val ) );
+                $h  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
+                $h .= '<tr><td style="padding:14px 14px;">';
+                $h .= '<div style="font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;margin-bottom:12px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $label ) . '</div>';
+                $h .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">';
+                $h .= '<tr>';
+                $h .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
+                $h .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
+                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( $formatter( $day_val ) ) . '</div>';
+                $h .= '</td>';
+                $h .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
+                $h .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
+                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( $formatter( $mtd_val ) ) . '</div>';
+                $h .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+                $h .= '</td>';
+                $h .= '</tr></table></td></tr></table>';
+                return $h;
+            };
 
             // Outer container.
             $html  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;" dir="' . esc_attr( $dir ) . '">';
@@ -1031,6 +1185,35 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $html .= '</table>';
             $html .= '</td></tr>';
 
+            // Section 2c: WooCommerce sales (Orders & Revenue). Only shown when
+            // WooCommerce is active so non-shop sites don't get an empty block.
+            if ( ! empty( $report['sales_enabled'] ) ) {
+                $sales_rd  = isset( $report['sales_report_day'] ) ? $report['sales_report_day'] : array();
+                $sales_mtd = isset( $report['sales_mtd_current'] ) ? $report['sales_mtd_current'] : array();
+                $sales_pmt = isset( $report['sales_mtd_prev_month'] ) ? $report['sales_mtd_prev_month'] : array();
+
+                $sales_get = static function ( $arr, $key ) {
+                    return isset( $arr[ $key ] ) ? $arr[ $key ] : 0;
+                };
+
+                // Spacing + section heading.
+                $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
+                $html .= '<tr><td style="padding:0 16px 8px 16px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_sales_section ) . '</td></tr>';
+
+                $html .= '<tr><td style="padding:0 16px;">';
+                $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
+                $html .= '<tr>';
+                $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;">';
+                $html .= $stat_card( $lbl_orders, $sales_get( $sales_rd, 'orders' ), $sales_get( $sales_mtd, 'orders' ), $sales_get( $sales_pmt, 'orders' ), $fmt_count );
+                $html .= '</td>';
+                $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;">';
+                $html .= $stat_card( $lbl_revenue, $sales_get( $sales_rd, 'revenue' ), $sales_get( $sales_mtd, 'revenue' ), $sales_get( $sales_pmt, 'revenue' ), $fmt_money );
+                $html .= '</td>';
+                $html .= '</tr>';
+                $html .= '</table>';
+                $html .= '</td></tr>';
+            }
+
             // Spacing before sources table.
             $html .= '<tr><td height="16" style="height:16px;line-height:16px;font-size:1px;">&nbsp;</td></tr>';
 
@@ -1219,13 +1402,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return false;
             }
 
-            $settings = $this->get_settings();
-            $is_hebrew = ( isset( $settings['report_language'] ) && 'he' === $settings['report_language'] );
-
             $report = $this->build_daily_report_payload();
             $domain = $this->get_site_domain();
             $subject = sprintf(
-                $is_hebrew ? '"%s" - ספירת לידים BRN - %s' : '"%s" - BRN Lead count - %s',
+                '"%s" - BRN Lead count - %s',
                 $domain,
                 isset( $report['report_day_label'] ) ? $report['report_day_label'] : wp_date( 'Y-m-d' )
             );
@@ -1233,7 +1413,18 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $headers = array( 'Content-Type: text/html; charset=UTF-8' );
             $message = $this->build_daily_report_html( $report );
 
+            // Show "BRN Lead Count" as the sender name instead of the generic
+            // WordPress default. Scoped to this send only (keeps the site's
+            // default from-address, so deliverability is unaffected).
+            $from_name = static function () {
+                return 'BRN Lead Count';
+            };
+            add_filter( 'wp_mail_from_name', $from_name );
+
             $sent = wp_mail( $emails, $subject, $message, $headers );
+
+            remove_filter( 'wp_mail_from_name', $from_name );
+
             if ( $sent ) {
                 update_option( self::OPTION_LAST_REPORT_SENT, time(), false );
             }
@@ -1296,7 +1487,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.5.6',
+                '1.7.0',
                 true
             );
 
@@ -1495,6 +1686,15 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             add_submenu_page(
                 'brn-lead-count-analytics',
+                __( 'Sales', 'brn-lead-count' ),
+                __( 'Sales', 'brn-lead-count' ),
+                'manage_options',
+                'brn-lead-count-sales',
+                array( $this, 'render_sales_page' )
+            );
+
+            add_submenu_page(
+                'brn-lead-count-analytics',
                 __( 'Settings', 'brn-lead-count' ),
                 __( 'Settings', 'brn-lead-count' ),
                 'manage_options',
@@ -1565,7 +1765,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.5.6';
+            $plugin_ver   = '1.7.0';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
@@ -1857,7 +2057,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $output['report_send_time'] = isset( $input['report_send_time'] ) && preg_match( '/^\d{2}:\d{2}$/', (string) $input['report_send_time'] )
                 ? (string) $input['report_send_time']
                 : '09:00';
-            $output['report_same_day_mode'] = empty( $input['report_same_day_mode'] ) ? 0 : 1;
             $output['report_language']        = ( isset( $input['report_language'] ) && 'he' === (string) $input['report_language'] ) ? 'he' : 'en';
             $output['enable_recommendations'] = empty( $input['enable_recommendations'] ) ? 0 : 1;
 
@@ -1991,6 +2190,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'leads' => array(
                     'label' => __( 'Leads', 'brn-lead-count' ),
                     'url'   => admin_url( 'admin.php?page=brn-lead-count-leads' ),
+                ),
+                'sales' => array(
+                    'label' => __( 'Sales', 'brn-lead-count' ),
+                    'url'   => admin_url( 'admin.php?page=brn-lead-count-sales' ),
                 ),
                 'settings' => array(
                     'label' => __( 'Settings', 'brn-lead-count' ),
@@ -2439,16 +2642,6 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                                 </td>
                             </tr>
                             <tr>
-                                <th scope="row"><?php esc_html_e( 'Same-Day Report Mode', 'brn-lead-count' ); ?></th>
-                                <td>
-                                    <label>
-                                        <input type="checkbox" name="<?php echo esc_attr( self::OPTION_SETTINGS ); ?>[report_same_day_mode]" value="1" <?php checked( 1, isset( $settings['report_same_day_mode'] ) ? (int) $settings['report_same_day_mode'] : 0 ); ?> />
-                                        <?php esc_html_e( 'Send at 19:00 using same-day data (00:00 until 19:00).', 'brn-lead-count' ); ?>
-                                    </label>
-                                    <p class="description"><?php esc_html_e( 'When enabled, daily report time is fixed to 19:00 local site time. When disabled, custom report time + yesterday data are used.', 'brn-lead-count' ); ?></p>
-                                </td>
-                            </tr>
-                            <tr>
                                 <th scope="row"><?php esc_html_e( 'Report Language', 'brn-lead-count' ); ?></th>
                                 <td>
                                     <select name="<?php echo esc_attr( self::OPTION_SETTINGS ); ?>[report_language]">
@@ -2840,6 +3033,319 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 }());
                 </script>
                 <?php endif; ?>
+            </div>
+            <?php
+        }
+
+        /* ----------------------------------------------------------------- *
+         * WooCommerce sales attribution
+         * ----------------------------------------------------------------- */
+
+        /**
+         * Read the visitor's tracked lead source from the cookie the tracker sets.
+         *
+         * @return string Normalized source, or '' when no cookie is present.
+         */
+        private function get_source_from_cookie() {
+            if ( empty( $_COOKIE['brn_lead_source'] ) ) {
+                return '';
+            }
+            $raw = urldecode( wp_unslash( $_COOKIE['brn_lead_source'] ) );
+            return $this->normalize_source( $raw );
+        }
+
+        /**
+         * Persist the lead source onto the order at checkout, while the cookie is
+         * still available on the request.
+         *
+         * @param int $order_id
+         * @return void
+         */
+        public function capture_order_source( $order_id ) {
+            if ( empty( $order_id ) || ! function_exists( 'wc_get_order' ) ) {
+                return;
+            }
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) {
+                return;
+            }
+            if ( '' !== (string) $order->get_meta( '_brn_source' ) ) {
+                return;
+            }
+            $source = $this->get_source_from_cookie();
+            if ( '' === $source ) {
+                $source = 'direct';
+            }
+            $order->update_meta_data( '_brn_source', $source );
+            $order->save();
+        }
+
+        /**
+         * Determine a normalized source label for a WooCommerce order. Prefers our
+         * own _brn_source (richer PPC detection from the tracker cookie), then falls
+         * back to WooCommerce Order Attribution data, then 'unknown'. This lets the
+         * Sales dashboard attribute historical orders placed before this plugin
+         * started capturing _brn_source.
+         *
+         * @param WC_Order $order
+         * @return string
+         */
+        private function get_order_source( $order ) {
+            $brn = (string) $order->get_meta( '_brn_source' );
+            if ( '' !== $brn ) {
+                return $this->normalize_source( $brn );
+            }
+
+            // WooCommerce Order Attribution (WC 8.5+).
+            $utm_source = (string) $order->get_meta( '_wc_order_attribution_utm_source' );
+            $utm_medium = (string) $order->get_meta( '_wc_order_attribution_utm_medium' );
+            $type       = (string) $order->get_meta( '_wc_order_attribution_source_type' );
+            $referrer   = (string) $order->get_meta( '_wc_order_attribution_referrer' );
+
+            $params = array();
+            if ( '' !== $utm_source ) {
+                $params['utm_source'] = $utm_source;
+            }
+            if ( '' !== $utm_medium ) {
+                $params['utm_medium'] = $utm_medium;
+            }
+
+            $paid = $this->classify_paid_source( $params );
+            if ( '' !== $paid ) {
+                return $this->normalize_source( $paid );
+            }
+
+            if ( '' !== $utm_source ) {
+                return $this->normalize_source( $utm_source );
+            }
+
+            if ( 'typein' === $type || 'direct' === $type ) {
+                return 'direct';
+            }
+            if ( 'organic' === $type ) {
+                return 'organic';
+            }
+            if ( 'referral' === $type && '' !== $referrer ) {
+                $host = wp_parse_url( $referrer, PHP_URL_HOST );
+                if ( $host ) {
+                    return $this->normalize_source( preg_replace( '/^www\./', '', strtolower( (string) $host ) ) );
+                }
+            }
+
+            return 'unknown';
+        }
+
+        /**
+         * HPOS-safe admin edit URL for an order.
+         *
+         * @param int $order_id
+         * @return string
+         */
+        private function wc_order_edit_url( $order_id ) {
+            if (
+                class_exists( '\\Automattic\\WooCommerce\\Utilities\\OrderUtil' )
+                && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled()
+            ) {
+                return admin_url( 'admin.php?page=wc-orders&action=edit&id=' . (int) $order_id );
+            }
+            return admin_url( 'post.php?post=' . (int) $order_id . '&action=edit' );
+        }
+
+        /**
+         * Sales dashboard: totals, sales-by-source, and recent sales.
+         *
+         * @return void
+         */
+        public function render_sales_page() {
+            if ( ! current_user_can( 'manage_options' ) ) {
+                return;
+            }
+
+            $wc_active = function_exists( 'wc_get_orders' );
+
+            $allowed_ranges = array( 7, 30, 90, 365, 0 );
+            $range          = isset( $_GET['range'] ) ? absint( wp_unslash( $_GET['range'] ) ) : 30;
+            if ( ! in_array( $range, $allowed_ranges, true ) ) {
+                $range = 30;
+            }
+
+            // Read orders live from WooCommerce so the dashboard reflects real
+            // sales, including orders placed before this plugin was installed.
+            $query_limit = 5000;
+            $orders      = array();
+            $capped      = false;
+
+            if ( $wc_active ) {
+                $args = array(
+                    'status'  => array( 'wc-processing', 'wc-completed' ),
+                    'limit'   => $query_limit,
+                    'orderby' => 'date',
+                    'order'   => 'DESC',
+                    'return'  => 'objects',
+                );
+                if ( $range > 0 ) {
+                    $args['date_created'] = '>=' . ( time() - ( $range * DAY_IN_SECONDS ) );
+                }
+                $orders = wc_get_orders( $args );
+                if ( ! is_array( $orders ) ) {
+                    $orders = array();
+                }
+                if ( count( $orders ) >= $query_limit ) {
+                    $capped = true;
+                }
+            }
+
+            $total_orders  = 0;
+            $total_revenue = 0.0;
+            $by_source     = array();
+            $filtered      = array();
+
+            foreach ( $orders as $order ) {
+                if ( ! is_object( $order ) || ! method_exists( $order, 'get_total' ) ) {
+                    continue;
+                }
+                $src   = $this->get_order_source( $order );
+                $total = (float) $order->get_total();
+
+                $total_orders++;
+                $total_revenue += $total;
+
+                if ( ! isset( $by_source[ $src ] ) ) {
+                    $by_source[ $src ] = array( 'orders' => 0, 'revenue' => 0.0 );
+                }
+                $by_source[ $src ]['orders']  += 1;
+                $by_source[ $src ]['revenue'] += $total;
+
+                $date_obj   = $order->get_date_created();
+                $filtered[] = array(
+                    'order_id' => $order->get_id(),
+                    'time'     => $date_obj ? wc_format_datetime( $date_obj, 'Y-m-d H:i' ) : '',
+                    'source'   => $src,
+                    'total'    => $total,
+                    'currency' => $order->get_currency(),
+                    'email'    => $order->get_billing_email(),
+                    'status'   => function_exists( 'wc_get_order_status_name' ) ? wc_get_order_status_name( $order->get_status() ) : $order->get_status(),
+                );
+            }
+            uasort(
+                $by_source,
+                static function ( $a, $b ) {
+                    if ( $a['revenue'] === $b['revenue'] ) {
+                        return 0;
+                    }
+                    return ( $a['revenue'] < $b['revenue'] ) ? 1 : -1;
+                }
+            );
+
+            $money = static function ( $amount, $currency = '' ) {
+                if ( function_exists( 'wc_price' ) ) {
+                    $args = ( '' !== $currency ) ? array( 'currency' => $currency ) : array();
+                    return wp_kses_post( wc_price( (float) $amount, $args ) );
+                }
+                return esc_html( number_format_i18n( (float) $amount, 2 ) );
+            };
+
+            $base_url = admin_url( 'admin.php?page=brn-lead-count-sales' );
+            $ranges   = array(
+                7   => __( 'Last 7 days', 'brn-lead-count' ),
+                30  => __( 'Last 30 days', 'brn-lead-count' ),
+                90  => __( 'Last 90 days', 'brn-lead-count' ),
+                365 => __( 'Last year', 'brn-lead-count' ),
+                0   => __( 'All time', 'brn-lead-count' ),
+            );
+            ?>
+            <div class="wrap">
+                <h1><?php esc_html_e( 'BRN Lead Count — Sales', 'brn-lead-count' ); ?></h1>
+
+                <?php if ( ! $wc_active ) : ?>
+                    <div class="notice notice-warning"><p><?php esc_html_e( 'WooCommerce is not active. Sales are read directly from WooCommerce and will appear here once it is enabled.', 'brn-lead-count' ); ?></p></div>
+                <?php endif; ?>
+
+                <p style="color:#646970;margin-top:4px;"><?php esc_html_e( 'Sales are read live from WooCommerce (processing and completed orders). Source is taken from this plugin\'s tracking when available, otherwise from WooCommerce order attribution.', 'brn-lead-count' ); ?></p>
+
+                <p>
+                    <?php
+                    foreach ( $ranges as $value => $label ) {
+                        $url   = esc_url( add_query_arg( 'range', $value, $base_url ) );
+                        $style = ( $value === $range ) ? ' style="font-weight:600;text-decoration:underline;"' : '';
+                        printf( '<a href="%s"%s>%s</a> &nbsp; ', $url, $style, esc_html( $label ) );
+                    }
+                    ?>
+                </p>
+
+                <div style="display:flex;gap:16px;flex-wrap:wrap;margin:16px 0 24px;">
+                    <div style="background:#fff;border:1px solid #c3c4c7;border-radius:6px;padding:14px 22px;min-width:150px;">
+                        <div style="font-size:12px;color:#646970;text-transform:uppercase;letter-spacing:.4px;"><?php esc_html_e( 'Orders', 'brn-lead-count' ); ?></div>
+                        <div style="font-size:26px;font-weight:700;margin-top:4px;"><?php echo esc_html( number_format_i18n( $total_orders ) ); ?></div>
+                    </div>
+                    <div style="background:#fff;border:1px solid #c3c4c7;border-radius:6px;padding:14px 22px;min-width:150px;">
+                        <div style="font-size:12px;color:#646970;text-transform:uppercase;letter-spacing:.4px;"><?php esc_html_e( 'Revenue', 'brn-lead-count' ); ?></div>
+                        <div style="font-size:26px;font-weight:700;margin-top:4px;"><?php echo $money( $total_revenue ); ?></div>
+                    </div>
+                </div>
+
+                <?php if ( $capped ) : ?>
+                    <div class="notice notice-info inline"><p><?php printf( esc_html__( 'Showing the most recent %d orders for this period.', 'brn-lead-count' ), (int) $query_limit ); ?></p></div>
+                <?php endif; ?>
+
+                <h2><?php esc_html_e( 'Sales by source', 'brn-lead-count' ); ?></h2>
+                <table class="widefat striped" style="max-width:680px;">
+                    <thead><tr>
+                        <th><?php esc_html_e( 'Source', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Orders', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Revenue', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Share of revenue', 'brn-lead-count' ); ?></th>
+                    </tr></thead>
+                    <tbody>
+                    <?php if ( empty( $by_source ) ) : ?>
+                        <tr><td colspan="4"><?php esc_html_e( 'No sales in this period.', 'brn-lead-count' ); ?></td></tr>
+                    <?php else : ?>
+                        <?php foreach ( $by_source as $src => $agg ) : ?>
+                            <tr>
+                                <td><?php echo esc_html( $this->source_label( (string) $src ) ); ?></td>
+                                <td><?php echo esc_html( number_format_i18n( $agg['orders'] ) ); ?></td>
+                                <td><?php echo $money( $agg['revenue'] ); ?></td>
+                                <td><?php echo $total_revenue > 0 ? esc_html( round( $agg['revenue'] / $total_revenue * 100, 1 ) . '%' ) : '0%'; ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+
+                <h2 style="margin-top:28px;"><?php esc_html_e( 'Recent sales', 'brn-lead-count' ); ?></h2>
+                <table class="widefat striped">
+                    <thead><tr>
+                        <th><?php esc_html_e( 'Date', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Order', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Source', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Status', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Total', 'brn-lead-count' ); ?></th>
+                        <th><?php esc_html_e( 'Email', 'brn-lead-count' ); ?></th>
+                    </tr></thead>
+                    <tbody>
+                    <?php if ( empty( $filtered ) ) : ?>
+                        <tr><td colspan="6"><?php esc_html_e( 'No sales in this period.', 'brn-lead-count' ); ?></td></tr>
+                    <?php else : ?>
+                        <?php foreach ( array_slice( $filtered, 0, 100 ) as $row ) : ?>
+                            <?php $oid = isset( $row['order_id'] ) ? (int) $row['order_id'] : 0; ?>
+                            <tr>
+                                <td><?php echo esc_html( isset( $row['time'] ) ? (string) $row['time'] : '' ); ?></td>
+                                <td>
+                                    <?php if ( $oid ) : ?>
+                                        <a href="<?php echo esc_url( $this->wc_order_edit_url( $oid ) ); ?>">#<?php echo esc_html( (string) $oid ); ?></a>
+                                    <?php else : ?>
+                                        &mdash;
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo esc_html( $this->source_label( isset( $row['source'] ) ? (string) $row['source'] : '' ) ); ?></td>
+                                <td><?php echo esc_html( isset( $row['status'] ) ? (string) $row['status'] : '' ); ?></td>
+                                <td><?php echo $money( isset( $row['total'] ) ? (float) $row['total'] : 0, isset( $row['currency'] ) ? (string) $row['currency'] : '' ); ?></td>
+                                <td><?php echo esc_html( isset( $row['email'] ) ? (string) $row['email'] : '' ); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
             <?php
         }

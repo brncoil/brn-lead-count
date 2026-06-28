@@ -10,11 +10,40 @@
 
     function normalizeSource(raw) {
         var source = (raw || '').toString().toLowerCase().trim();
-        source = source.replace(/\s+/g, '-').replace(/[^a-z0-9_.\/\-]/g, '').replace(/^[.\/\-]+|[.\/\-]+$/g, '');
+        source = source.replace(/\s+/g, '-').replace(/[^a-z0-9_.-]/g, '').replace(/^[.-]+|[.-]+$/g, '');
         if (!source) {
             source = 'direct';
         }
-        return source.substring(0, 120);
+        return source.substring(0, 80);
+    }
+
+    var PAID_MEDIUMS = ['cpc', 'ppc', 'paid', 'paidsearch', 'paid-search', 'paid_search', 'cpm', 'paid-social', 'paidsocial'];
+
+    // Detect paid-traffic (PPC) sources from URL params. Ad-network click IDs are
+    // present even when no UTM tags are set (e.g. Google Ads auto-tagging only adds
+    // gclid), so paid traffic is not mistaken for organic. Returns '' if not paid.
+    function classifyPaidSource(params) {
+        if (!params) {
+            return '';
+        }
+        if (params.get('gclid') || params.get('gbraid') || params.get('wbraid')) {
+            return 'google-ads';
+        }
+        if (params.get('msclkid')) {
+            return 'microsoft-ads';
+        }
+        if (params.get('fbclid')) {
+            return 'facebook-ads';
+        }
+        var medium = (params.get('utm_medium') || '').toLowerCase().trim();
+        if (PAID_MEDIUMS.indexOf(medium) > -1) {
+            var src = (params.get('utm_source') || '').toLowerCase().trim();
+            if (src) {
+                return src.slice(-3) === 'ads' ? src : src + '-ads';
+            }
+            return 'paid';
+        }
+        return '';
     }
 
     function getLeadSource() {
@@ -23,16 +52,13 @@
             if (typeof URLSearchParams !== 'undefined') {
                 params = new URLSearchParams(window.location.search || '');
             }
-            var utmSource = params ? params.get('utm_source') : null;
-            if (utmSource && utmSource.trim()) {
-                var parts = [normalizeSource(utmSource)];
-                var utmMedium   = params ? params.get('utm_medium')   : null;
-                var utmCampaign = params ? params.get('utm_campaign') : null;
-                if (utmMedium   && utmMedium.trim())   { parts.push(normalizeSource(utmMedium)); }
-                if (utmCampaign && utmCampaign.trim()) { parts.push(normalizeSource(utmCampaign)); }
-                return parts.join('/');
+
+            var paid = classifyPaidSource(params);
+            if (paid) {
+                return normalizeSource(paid);
             }
-            var keys = ['source', 'src', 'ref'];
+
+            var keys = ['utm_source', 'source', 'src', 'ref'];
             for (var i = 0; i < keys.length; i++) {
                 var key = keys[i];
                 var val = params ? params.get(key) : null;
@@ -55,7 +81,29 @@
         return 'direct';
     }
 
+    // Cookie helpers — the source cookie lets the server attribute WooCommerce
+    // orders (placed later, server-side) to the visitor's original lead source.
+    function getCookie(name) {
+        var match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\\/\+^])/g, '\\$1') + '=([^;]*)'));
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    function setSourceCookie(src) {
+        if (!src) {
+            return;
+        }
+        // Don't overwrite a meaningful prior source with a plain "direct" visit
+        // (keeps first/earlier attribution across internal navigation).
+        if (src === 'direct' && getCookie('brn_lead_source')) {
+            return;
+        }
+        var date = new Date();
+        date.setTime(date.getTime() + 30 * 24 * 60 * 60 * 1000);
+        document.cookie = 'brn_lead_source=' + encodeURIComponent(src) + '; expires=' + date.toUTCString() + '; path=/; SameSite=Lax';
+    }
+
     var leadSource = getLeadSource();
+    setSourceCookie(leadSource);
 
     // Deduplicate: ignore a second event for the same lead within 2 seconds.
     var recentLeadKeys = {};
@@ -130,25 +178,6 @@
             xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=UTF-8');
             xhr.send(body);
         } catch (e) {}
-    }
-
-    function buildFormLabel(form, prefix) {
-        var parts = [];
-        if (prefix) {
-            parts.push(prefix);
-        }
-
-        if (form) {
-            var id = (form.getAttribute('id') || '').trim();
-            var name = (form.getAttribute('name') || '').trim();
-            var action = (form.getAttribute('action') || '').trim();
-
-            if (id) { parts.push('id:' + id); }
-            if (name) { parts.push('name:' + name); }
-            if (action) { parts.push('action:' + action.substring(0, 80)); }
-        }
-
-        return parts.join(' | ');
     }
 
     // -----------------------------------------------------------------------
@@ -230,7 +259,16 @@
             return;
         }
 
-        sendLead('form_submit', buildFormLabel(form, 'native'));
+        var parts  = [];
+        var id     = (form.getAttribute('id') || '').trim();
+        var name   = (form.getAttribute('name') || '').trim();
+        var action = (form.getAttribute('action') || '').trim();
+
+        if (id)     { parts.push('id:' + id); }
+        if (name)   { parts.push('name:' + name); }
+        if (action) { parts.push('action:' + action.substring(0, 80)); }
+
+        sendLead('form_submit', parts.join(' | '));
     }, true);
 
     // -----------------------------------------------------------------------
@@ -255,32 +293,6 @@
         sendLead('form_submit', parts.join(' | '));
     }, true);
 
-    // Contact Form 7 dispatches success events on document.
-    document.addEventListener('wpcf7mailsent', function (event) {
-        var detail = event && event.detail ? event.detail : {};
-        var parts = ['cf7'];
-        if (detail.contactFormId) { parts.push('id:' + detail.contactFormId); }
-        if (detail.unitTag) { parts.push('unit:' + detail.unitTag); }
-        sendLead('form_submit', parts.join(' | '));
-    }, true);
-
-    // Custom-event fallbacks used by some AJAX form plugins.
-    document.addEventListener('fluentform_submission_success', function (event) {
-        var detail = event && event.detail ? event.detail : {};
-        var formId = detail.form_id || detail.formId || '';
-        var parts = ['fluent'];
-        if (formId) { parts.push('id:' + formId); }
-        sendLead('form_submit', parts.join(' | '));
-    }, true);
-
-    document.addEventListener('forminator:form:submit:success', function (event) {
-        var detail = event && event.detail ? event.detail : {};
-        var formId = detail.form_id || detail.formId || '';
-        var parts = ['forminator'];
-        if (formId) { parts.push('id:' + formId); }
-        sendLead('form_submit', parts.join(' | '));
-    }, true);
-
     // jQuery trigger fallback (older Elementor versions).
     if (typeof window.jQuery !== 'undefined') {
         window.jQuery(document).on('submit_success.elementor-forms', function (event, response) {
@@ -293,35 +305,6 @@
 
             var parts = ['elementor'];
             if (formName) { parts.push(formName); }
-            sendLead('form_submit', parts.join(' | '));
-        });
-
-        // WPForms AJAX success.
-        window.jQuery(document).on('wpformsAjaxSubmitSuccess', function (event, formData, form) {
-            var formEl = form && form[0] ? form[0] : null;
-            sendLead('form_submit', buildFormLabel(formEl, 'wpforms'));
-        });
-
-        // Gravity Forms confirmation loaded after successful AJAX submit.
-        window.jQuery(document).on('gform_confirmation_loaded', function (event, formId) {
-            var parts = ['gravity'];
-            if (formId) { parts.push('id:' + formId); }
-            sendLead('form_submit', parts.join(' | '));
-        });
-
-        // Fluent Forms success (common jQuery event pattern).
-        window.jQuery(document).on('fluentform_submission_success', function (event, data) {
-            var formId = data && (data.form_id || data.formId) ? (data.form_id || data.formId) : '';
-            var parts = ['fluent'];
-            if (formId) { parts.push('id:' + formId); }
-            sendLead('form_submit', parts.join(' | '));
-        });
-
-        // Forminator success (custom event used by some installs).
-        window.jQuery(document).on('forminator:form:submit:success', function (event, data) {
-            var formId = data && (data.form_id || data.formId) ? (data.form_id || data.formId) : '';
-            var parts = ['forminator'];
-            if (formId) { parts.push('id:' + formId); }
             sendLead('form_submit', parts.join(' | '));
         });
     }
