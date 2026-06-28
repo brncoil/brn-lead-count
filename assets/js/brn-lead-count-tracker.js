@@ -102,8 +102,13 @@
         document.cookie = 'brn_lead_source=' + encodeURIComponent(src) + '; expires=' + date.toUTCString() + '; path=/; SameSite=Lax';
     }
 
-    var leadSource = getLeadSource();
-    setSourceCookie(leadSource);
+    // Resolve this page's source and persist it (first meaningful touch wins and
+    // is never downgraded to "direct"). Attribute the lead to the PERSISTED
+    // source so Google Ads / organic attribution survives internal navigation,
+    // where the landing page's gclid or external referrer is no longer present.
+    var pageSource = getLeadSource();
+    setSourceCookie(pageSource);
+    var leadSource = getCookie('brn_lead_source') || pageSource;
 
     // Deduplicate: ignore a second event for the same lead within 2 seconds.
     var recentLeadKeys = {};

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.0
+ * Version: 1.7.1
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -1487,7 +1487,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.0',
+                '1.7.1',
                 true
             );
 
@@ -1577,6 +1577,19 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $source   = $this->normalize_source( $source );
             if ( '' === $source ) {
                 $source = $this->normalize_source( $this->derive_source_from_url( $url ) );
+            }
+
+            // If the current page can't identify a real source — e.g. the visitor
+            // landed via a Google Ad (gclid) or organic Google referrer, then
+            // navigated to another page before converting — fall back to the
+            // persisted first-touch source cookie (the same one used to attribute
+            // WooCommerce orders). Without this, those leads are mislabelled
+            // "direct" because the gclid/referrer only existed on the landing page.
+            if ( '' === $source || 'direct' === $source ) {
+                $cookie_source = $this->get_source_from_cookie();
+                if ( '' !== $cookie_source && 'direct' !== $cookie_source && 'other' !== $cookie_source ) {
+                    $source = $cookie_source;
+                }
             }
 
             if ( ! $is_test ) {
@@ -1765,7 +1778,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.0';
+            $plugin_ver   = '1.7.1';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
