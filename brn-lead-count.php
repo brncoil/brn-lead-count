@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.3
+ * Version: 1.7.4
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -543,12 +543,13 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
          *
          * @param int $start_ts
          * @param int $end_ts
-         * @return array{orders:int,revenue:float}
+         * @return array{orders:int,revenue:float,by_source:array<string,array{orders:int,revenue:float}>}
          */
         private function get_window_sales( $start_ts, $end_ts ) {
             $result = array(
-                'orders'  => 0,
-                'revenue' => 0.0,
+                'orders'    => 0,
+                'revenue'   => 0.0,
+                'by_source' => array(),
             );
 
             if ( ! function_exists( 'wc_get_orders' ) ) {
@@ -571,8 +572,17 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 if ( ! is_object( $order ) || ! method_exists( $order, 'get_total' ) ) {
                     continue;
                 }
+                $total = (float) $order->get_total();
+                $src   = $this->get_order_source( $order );
+
                 $result['orders']  += 1;
-                $result['revenue'] += (float) $order->get_total();
+                $result['revenue'] += $total;
+
+                if ( ! isset( $result['by_source'][ $src ] ) ) {
+                    $result['by_source'][ $src ] = array( 'orders' => 0, 'revenue' => 0.0 );
+                }
+                $result['by_source'][ $src ]['orders']  += 1;
+                $result['by_source'][ $src ]['revenue'] += $total;
             }
 
             return $result;
@@ -839,6 +849,34 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return $b['mtd'] - $a['mtd'];
             } );
 
+            // WooCommerce sales windows (orders + revenue, with per-source breakdown).
+            $sales_report_day = $this->get_window_sales( $report_day_start->getTimestamp(), $report_day_end->getTimestamp() );
+            $sales_mtd        = $this->get_window_sales( $mtd_start->getTimestamp(), $mtd_end->getTimestamp() );
+            $sales_prev_mtd   = $this->get_window_sales( $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() );
+
+            // Build a "Sales by Source" table (month-to-date), sorted by revenue
+            // descending, with each source's share of total MTD revenue.
+            $mtd_by_source = isset( $sales_mtd['by_source'] ) && is_array( $sales_mtd['by_source'] ) ? $sales_mtd['by_source'] : array();
+            $day_by_source = isset( $sales_report_day['by_source'] ) && is_array( $sales_report_day['by_source'] ) ? $sales_report_day['by_source'] : array();
+            $mtd_revenue   = isset( $sales_mtd['revenue'] ) ? (float) $sales_mtd['revenue'] : 0.0;
+
+            $sales_sources_table = array();
+            foreach ( $mtd_by_source as $sk => $vals ) {
+                $rev = isset( $vals['revenue'] ) ? (float) $vals['revenue'] : 0.0;
+                $sales_sources_table[ $sk ] = array(
+                    'day_orders'  => isset( $day_by_source[ $sk ]['orders'] ) ? (int) $day_by_source[ $sk ]['orders'] : 0,
+                    'orders'      => isset( $vals['orders'] ) ? (int) $vals['orders'] : 0,
+                    'revenue'     => $rev,
+                    'share'       => ( $mtd_revenue > 0 ) ? round( ( $rev / $mtd_revenue ) * 100, 1 ) : 0.0,
+                );
+            }
+            uasort( $sales_sources_table, function ( $a, $b ) {
+                if ( $a['revenue'] === $b['revenue'] ) {
+                    return 0;
+                }
+                return ( $a['revenue'] < $b['revenue'] ) ? 1 : -1;
+            } );
+
             return array(
                 'now_label'        => wp_date( 'Y-m-d H:i', $now->getTimestamp() ),
                 'report_day_label' => wp_date( 'Y-m-d', $report_day_start->getTimestamp() ),
@@ -850,9 +888,10 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'mtd_prev_month' => $this->get_window_counts( $logs, $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() ),
                 // WooCommerce sales for the same windows (orders + revenue).
                 'sales_enabled'        => function_exists( 'wc_get_orders' ),
-                'sales_report_day'     => $this->get_window_sales( $report_day_start->getTimestamp(), $report_day_end->getTimestamp() ),
-                'sales_mtd_current'    => $this->get_window_sales( $mtd_start->getTimestamp(), $mtd_end->getTimestamp() ),
-                'sales_mtd_prev_month' => $this->get_window_sales( $prev_month_first->getTimestamp(), $prev_month_same_day->getTimestamp() ),
+                'sales_report_day'     => $sales_report_day,
+                'sales_mtd_current'    => $sales_mtd,
+                'sales_mtd_prev_month' => $sales_prev_mtd,
+                'sales_sources_table'  => $sales_sources_table,
                 // Sources.
                 'report_day_sources' => $report_day_sources,
                 'sources_table'      => $sources_table,
@@ -921,6 +960,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $lbl_sales_section  = $is_hebrew ? 'מכירות (WooCommerce)' : 'Sales (WooCommerce)';
             $lbl_orders         = $is_hebrew ? 'הזמנות' : 'Orders';
             $lbl_revenue        = $is_hebrew ? 'הכנסה' : 'Revenue';
+            $lbl_sales_by_src   = $is_hebrew ? 'מכירות לפי מקור (מצטבר חודשי)' : 'Sales by Source (Month to Date)';
+            $lbl_share          = $is_hebrew ? 'נתח הכנסה' : 'Share';
             $lbl_source_section = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
             $lbl_source_col     = $is_hebrew ? 'מקור' : 'Source';
             $lbl_reco_section   = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
@@ -1220,6 +1261,40 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 $html .= '</tr>';
                 $html .= '</table>';
                 $html .= '</td></tr>';
+
+                // Sales by Source (month-to-date), sorted by revenue with each
+                // source's share of total MTD revenue.
+                $sales_sources = isset( $report['sales_sources_table'] ) && is_array( $report['sales_sources_table'] ) ? $report['sales_sources_table'] : array();
+
+                $html .= '<tr><td height="14" style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>';
+                $html .= '<tr><td style="padding:0 16px;">';
+                $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #dde5f0;background:#ffffff;">';
+                $html .= '<tr><td colspan="4" style="padding:14px 14px 12px 14px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $lbl_sales_by_src ) . '</td></tr>';
+                $html .= '<tr style="background:#f0f4fb;border-bottom:1px solid #dde5f0;">';
+                $html .= '<th style="padding:10px 12px;text-align:' . esc_attr( $align_primary ) . ';font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_source_col ) . '</th>';
+                $html .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_orders ) . '</th>';
+                $html .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_revenue ) . '</th>';
+                $html .= '<th style="padding:10px 8px;text-align:center;font-size:12px;line-height:15px;color:#3e4f66;font-weight:bold;">' . esc_html( $lbl_share ) . '</th>';
+                $html .= '</tr>';
+
+                if ( empty( $sales_sources ) ) {
+                    $html .= '<tr><td colspan="4" style="padding:12px 14px;color:#8a9bb0;font-size:12px;line-height:16px;">' . esc_html__( 'No sales data.', 'brn-lead-count' ) . '</td></tr>';
+                } else {
+                    $s_idx = 0;
+                    foreach ( $sales_sources as $sk => $row ) {
+                        $bg        = ( 0 === $s_idx % 2 ) ? '#ffffff' : '#f9fbfd';
+                        $share_txt = $ltr( number_format_i18n( isset( $row['share'] ) ? (float) $row['share'] : 0, 1 ) . '%' );
+                        $html     .= '<tr style="background:' . esc_attr( $bg ) . ';border-bottom:1px solid #edf2f8;">';
+                        $html     .= '<td style="padding:10px 12px;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
+                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;">' . esc_html( $fmt_count( isset( $row['orders'] ) ? $row['orders'] : 0 ) ) . '</td>';
+                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . esc_html( $fmt_money( isset( $row['revenue'] ) ? $row['revenue'] : 0 ) ) . '</td>';
+                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;color:#3a6650;">' . esc_html( $share_txt ) . '</td>';
+                        $html     .= '</tr>';
+                        ++$s_idx;
+                    }
+                }
+                $html .= '</table>';
+                $html .= '</td></tr>';
             }
 
             // Spacing before sources table.
@@ -1495,7 +1570,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.3',
+                '1.7.4',
                 true
             );
 
@@ -1786,7 +1861,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.3';
+            $plugin_ver   = '1.7.4';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
