@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.4
+ * Version: 1.7.5
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -988,25 +988,26 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 );
             };
 
-            // Wrap numeric output in a Unicode LTR isolate (U+2066 … U+2069) so the
-            // currency symbol and thousands separators render as a single
-            // left-to-right unit inside the RTL email. Without it, the bidi
-            // algorithm reorders them (e.g. "145,362₪" shows as "145₪362,").
-            $ltr = static function ( $text ) {
-                return "\u{2066}" . $text . "\u{2069}";
+            // Escape a number and wrap it in an LTR span so the currency symbol and
+            // thousands separators stay together as a single left-to-right unit
+            // inside the RTL email. Uses the dir="ltr" HTML attribute (supported by
+            // all mail clients, incl. Outlook) rather than Unicode bidi control
+            // characters, which some clients render as visible "LRI"/"PDI" boxes.
+            $ltr_span = static function ( $text ) {
+                return '<span dir="ltr" style="unicode-bidi:isolate;">' . esc_html( $text ) . '</span>';
             };
 
             // Money formatter for the sales section (uses the WooCommerce currency
             // symbol when available; falls back to a plain localized number).
-            $fmt_money = static function ( $amount ) use ( $ltr ) {
+            $fmt_money = static function ( $amount ) {
                 $amount = (float) $amount;
                 $symbol = function_exists( 'get_woocommerce_currency_symbol' )
                     ? html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' )
                     : '';
-                return $ltr( $symbol . number_format_i18n( $amount, 0 ) );
+                return $symbol . number_format_i18n( $amount, 0 );
             };
-            $fmt_count = static function ( $amount ) use ( $ltr ) {
-                return $ltr( number_format_i18n( (int) $amount ) );
+            $fmt_count = static function ( $amount ) {
+                return number_format_i18n( (int) $amount );
             };
 
             $rd  = isset( $report['report_day'] ) ? $report['report_day'] : array();
@@ -1022,7 +1023,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             // Reusable Yesterday/MTD stat card (also used by the sales section).
             // $formatter renders the raw numeric value (count or money).
-            $stat_card = function ( $label, $day_val, $mtd_val, $pmt_val, $formatter ) use ( $align_primary, $lbl_yesterday, $lbl_mtd, $trend_text ) {
+            $stat_card = function ( $label, $day_val, $mtd_val, $pmt_val, $formatter ) use ( $align_primary, $lbl_yesterday, $lbl_mtd, $trend_text, $ltr_span ) {
                 $trend = $trend_text( (int) round( $mtd_val ), (int) round( $pmt_val ) );
                 $h  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;">';
                 $h .= '<tr><td style="padding:14px 14px;">';
@@ -1031,12 +1032,12 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 $h .= '<tr>';
                 $h .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-right:8px;">';
                 $h .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
-                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . esc_html( $formatter( $day_val ) ) . '</div>';
+                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#0f5fb7;margin-top:6px;">' . $ltr_span( $formatter( $day_val ) ) . '</div>';
                 $h .= '</td>';
                 $h .= '<td width="50%" style="text-align:' . esc_attr( $align_primary ) . ';padding-left:8px;border-left:1px solid #e4ebf4;">';
                 $h .= '<div style="font-size:10px;line-height:14px;color:#8a9bb0;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
-                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . esc_html( $formatter( $mtd_val ) ) . '</div>';
-                $h .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . esc_html( $trend['text'] ) . '</div>';
+                $h .= '<div style="font-size:28px;line-height:32px;font-weight:bold;color:#1a8a50;margin-top:6px;">' . $ltr_span( $formatter( $mtd_val ) ) . '</div>';
+                $h .= '<div style="font-size:11px;line-height:14px;color:' . esc_attr( $trend['color'] ) . ';font-weight:bold;margin-top:4px;">' . $ltr_span( $trend['text'] ) . '</div>';
                 $h .= '</td>';
                 $h .= '</tr></table></td></tr></table>';
                 return $h;
@@ -1282,14 +1283,14 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 } else {
                     $s_idx = 0;
                     foreach ( $sales_sources as $sk => $row ) {
-                        $bg        = ( 0 === $s_idx % 2 ) ? '#ffffff' : '#f9fbfd';
-                        $share_txt = $ltr( number_format_i18n( isset( $row['share'] ) ? (float) $row['share'] : 0, 1 ) . '%' );
-                        $html     .= '<tr style="background:' . esc_attr( $bg ) . ';border-bottom:1px solid #edf2f8;">';
-                        $html     .= '<td style="padding:10px 12px;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
-                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;">' . esc_html( $fmt_count( isset( $row['orders'] ) ? $row['orders'] : 0 ) ) . '</td>';
-                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . esc_html( $fmt_money( isset( $row['revenue'] ) ? $row['revenue'] : 0 ) ) . '</td>';
-                        $html     .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;color:#3a6650;">' . esc_html( $share_txt ) . '</td>';
-                        $html     .= '</tr>';
+                        $bg         = ( 0 === $s_idx % 2 ) ? '#ffffff' : '#f9fbfd';
+                        $share_txt  = number_format_i18n( isset( $row['share'] ) ? (float) $row['share'] : 0, 1 ) . '%';
+                        $html      .= '<tr style="background:' . esc_attr( $bg ) . ';border-bottom:1px solid #edf2f8;">';
+                        $html      .= '<td style="padding:10px 12px;font-size:12px;line-height:16px;text-align:' . esc_attr( $align_primary ) . ';">' . esc_html( $this->source_label( (string) $sk ) ) . '</td>';
+                        $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;">' . $ltr_span( $fmt_count( isset( $row['orders'] ) ? $row['orders'] : 0 ) ) . '</td>';
+                        $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;font-weight:bold;text-align:center;">' . $ltr_span( $fmt_money( isset( $row['revenue'] ) ? $row['revenue'] : 0 ) ) . '</td>';
+                        $html      .= '<td style="padding:10px 8px;font-size:12px;line-height:16px;text-align:center;color:#3a6650;">' . $ltr_span( $share_txt ) . '</td>';
+                        $html      .= '</tr>';
                         ++$s_idx;
                     }
                 }
@@ -1570,7 +1571,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.4',
+                '1.7.5',
                 true
             );
 
@@ -1861,7 +1862,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.4';
+            $plugin_ver   = '1.7.5';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
