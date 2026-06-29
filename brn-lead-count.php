@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.2
+ * Version: 1.7.3
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -947,17 +947,25 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 );
             };
 
+            // Wrap numeric output in a Unicode LTR isolate (U+2066 … U+2069) so the
+            // currency symbol and thousands separators render as a single
+            // left-to-right unit inside the RTL email. Without it, the bidi
+            // algorithm reorders them (e.g. "145,362₪" shows as "145₪362,").
+            $ltr = static function ( $text ) {
+                return "\u{2066}" . $text . "\u{2069}";
+            };
+
             // Money formatter for the sales section (uses the WooCommerce currency
             // symbol when available; falls back to a plain localized number).
-            $fmt_money = static function ( $amount ) {
+            $fmt_money = static function ( $amount ) use ( $ltr ) {
                 $amount = (float) $amount;
                 $symbol = function_exists( 'get_woocommerce_currency_symbol' )
                     ? html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' )
                     : '';
-                return $symbol . number_format_i18n( $amount, 0 );
+                return $ltr( $symbol . number_format_i18n( $amount, 0 ) );
             };
-            $fmt_count = static function ( $amount ) {
-                return number_format_i18n( (int) $amount );
+            $fmt_count = static function ( $amount ) use ( $ltr ) {
+                return $ltr( number_format_i18n( (int) $amount ) );
             };
 
             $rd  = isset( $report['report_day'] ) ? $report['report_day'] : array();
@@ -1487,7 +1495,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.2',
+                '1.7.3',
                 true
             );
 
@@ -1778,7 +1786,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.2';
+            $plugin_ver   = '1.7.3';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
