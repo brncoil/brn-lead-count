@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.6
+ * Version: 1.7.7
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -1041,17 +1041,24 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             };
 
             // Outer container.
-            $html  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f7fb;font-family:Arial,Helvetica,sans-serif;" dir="' . esc_attr( $dir ) . '">';
-            $html .= '<tr><td align="center" style="padding:20px 8px;">';
+            // Arial font, applied on every text container so it is honored across
+            // mail clients that don't reliably inherit font-family into nested tables.
+            $font = 'font-family:Arial,Helvetica,sans-serif;';
+
+            $html  = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0;padding:0;background:#f4f7fb;' . $font . '" dir="' . esc_attr( $dir ) . '">';
+            $html .= '<tr><td align="center" style="padding:20px 8px;' . $font . '">';
 
             // Main email wrapper.
-            $html .= '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#ffffff;border:1px solid #dbe4ef;">';
+            $html .= '<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:640px;max-width:640px;background:#ffffff;border:1px solid #dbe4ef;' . $font . '">';
 
             // Header.
-            $html .= '<tr><td style="background:#0f5fb7;padding:20px 20px;color:#ffffff;">';
-            $html .= '<div style="font-size:26px;line-height:32px;font-weight:bold;margin:0 0 8px 0;color:#ffffff;">' . esc_html( $lbl_title ) . '</div>';
-            $html .= '<div style="font-size:13px;line-height:18px;color:#eaf2ff;">' . esc_html( $lbl_subtitle ) . ' - ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</div>';
-            $html .= '<div style="font-size:12px;line-height:16px;color:#d7e6ff;margin-top:8px;">' . esc_html( $lbl_site . ': ' . $domain ) . '</div>';
+            $html .= '<tr><td style="background:#0f5fb7;padding:20px 20px;color:#ffffff;' . $font . '">';
+            $html .= '<div style="font-size:26px;line-height:32px;font-weight:bold;margin:0 0 8px 0;color:#ffffff;' . $font . '">' . esc_html( $lbl_title ) . '</div>';
+            $html .= '<div style="font-size:13px;line-height:18px;color:#eaf2ff;' . $font . '">' . esc_html( $lbl_subtitle ) . ' - ' . esc_html( isset( $report['report_day_label'] ) ? $report['report_day_label'] : '' ) . '</div>';
+            // Render the domain as an explicit white, underlined link so mail
+            // clients don't auto-linkify it in their default (blue) style.
+            $domain_link = '<a href="' . esc_url( 'https://' . $domain ) . '" style="color:#ffffff;text-decoration:underline;' . $font . '">' . esc_html( $domain ) . '</a>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:#ffffff;margin-top:8px;' . $font . '">' . esc_html( $lbl_site ) . ': ' . $domain_link . '</div>';
             $html .= '</td></tr>';
 
             // Top spacing.
@@ -1061,20 +1068,22 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $html .= '<tr><td style="padding:0 16px;">';
             $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">';
             $html .= '<tr>';
-            $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;">';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cce0ff;background:#f5faff;">';
-            $html .= '<tr><td style="padding:16px 14px;">';
-            $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_yesterday ) . '</div>';
-            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#0f5fb7;margin-top:8px;">' . esc_html( (string) $today_total ) . '</div>';
+            // Both inner tables use height:100% so the two coloured boxes match the
+            // taller one (the MTD box carries an extra trend line).
+            $html .= '<td width="50%" style="padding-right:8px;vertical-align:top;height:100%;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #cce0ff;background:#f5faff;height:100%;">';
+            $html .= '<tr><td style="padding:16px 14px;vertical-align:top;' . $font . '">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;text-transform:uppercase;font-weight:bold;' . $font . '">' . esc_html( $lbl_yesterday ) . '</div>';
+            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#0f5fb7;margin-top:8px;' . $font . '">' . esc_html( (string) $today_total ) . '</div>';
             $html .= '</td></tr>';
             $html .= '</table>';
             $html .= '</td>';
-            $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;">';
-            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #b8ebd0;background:#f6fff9;">';
-            $html .= '<tr><td style="padding:16px 14px;">';
-            $html .= '<div style="font-size:11px;line-height:14px;color:#3a6650;text-transform:uppercase;font-weight:bold;">' . esc_html( $lbl_mtd ) . '</div>';
-            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#1a8a50;margin-top:8px;">' . esc_html( (string) $mtd_total ) . '</div>';
-            $html .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $mtd_trend['color'] ) . ';font-weight:bold;margin-top:8px;">' . esc_html( $mtd_trend['text'] ) . '<br/><span style="color:#8a9bb0;font-weight:normal;font-size:11px;">' . esc_html( $lbl_vs_prev ) . '</span></div>';
+            $html .= '<td width="50%" style="padding-left:8px;vertical-align:top;height:100%;">';
+            $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #b8ebd0;background:#f6fff9;height:100%;">';
+            $html .= '<tr><td style="padding:16px 14px;vertical-align:top;' . $font . '">';
+            $html .= '<div style="font-size:11px;line-height:14px;color:#3a6650;text-transform:uppercase;font-weight:bold;' . $font . '">' . esc_html( $lbl_mtd ) . '</div>';
+            $html .= '<div style="font-size:48px;line-height:52px;font-weight:bold;color:#1a8a50;margin-top:8px;' . $font . '">' . esc_html( (string) $mtd_total ) . '</div>';
+            $html .= '<div style="font-size:12px;line-height:16px;color:' . esc_attr( $mtd_trend['color'] ) . ';font-weight:bold;margin-top:8px;' . $font . '">' . esc_html( $mtd_trend['text'] ) . '<br/><span style="color:#8a9bb0;font-weight:normal;font-size:11px;' . $font . '">' . esc_html( $lbl_vs_prev ) . '</span></div>';
             $html .= '</td></tr>';
             $html .= '</table>';
             $html .= '</td>';
@@ -1568,7 +1577,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.6',
+                '1.7.7',
                 true
             );
 
@@ -1859,7 +1868,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.6';
+            $plugin_ver   = '1.7.7';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
