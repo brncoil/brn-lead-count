@@ -2,7 +2,7 @@
 /**
  * Plugin Name: BRN Lead Count
  * Description: Counts and logs lead actions (phone clicks, WhatsApp clicks, email clicks, and form submissions), classifies PPC vs organic traffic, and tracks WooCommerce sales by source.
- * Version: 1.7.7
+ * Version: 1.7.8
  * Author: BRN
  * License: GPL-2.0-or-later
  */
@@ -877,6 +877,31 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 return ( $a['revenue'] < $b['revenue'] ) ? 1 : -1;
             } );
 
+            // Sales over the 3 most recent COMPLETE calendar months (oldest ->
+            // newest), each with a month-over-month revenue trend so they can be
+            // compared. Complete months are used (not the partial current month)
+            // so the comparison is like-for-like.
+            $first_this_month   = $now->modify( 'first day of this month' )->setTime( 0, 0, 0 );
+            $sales_last_months  = array();
+            $prev_month_revenue = null;
+            for ( $i = 3; $i >= 1; $i-- ) {
+                $m_start  = $first_this_month->modify( '-' . $i . ' month' );
+                $m_end    = $m_start->modify( 'last day of this month' )->setTime( 23, 59, 59 );
+                $m_sales  = $this->get_window_sales( $m_start->getTimestamp(), $m_end->getTimestamp() );
+                $m_orders = isset( $m_sales['orders'] ) ? (int) $m_sales['orders'] : 0;
+                $m_rev    = isset( $m_sales['revenue'] ) ? (float) $m_sales['revenue'] : 0.0;
+
+                $sales_last_months[] = array(
+                    'label'   => wp_date( 'F Y', $m_start->getTimestamp() ),
+                    'orders'  => $m_orders,
+                    'revenue' => $m_rev,
+                    'trend'   => ( null === $prev_month_revenue )
+                        ? null
+                        : $this->build_trend_data( (int) round( $m_rev ), (int) round( $prev_month_revenue ) ),
+                );
+                $prev_month_revenue = $m_rev;
+            }
+
             return array(
                 'now_label'        => wp_date( 'Y-m-d H:i', $now->getTimestamp() ),
                 'report_day_label' => wp_date( 'Y-m-d', $report_day_start->getTimestamp() ),
@@ -892,6 +917,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'sales_mtd_current'    => $sales_mtd,
                 'sales_mtd_prev_month' => $sales_prev_mtd,
                 'sales_sources_table'  => $sales_sources_table,
+                'sales_last_months'    => $sales_last_months,
                 // Sources.
                 'report_day_sources' => $report_day_sources,
                 'sources_table'      => $sources_table,
@@ -962,6 +988,8 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
             $lbl_revenue        = $is_hebrew ? 'הכנסה' : 'Revenue';
             $lbl_sales_by_src   = $is_hebrew ? 'מכירות לפי מקור (מצטבר חודשי)' : 'Sales by Source (Month to Date)';
             $lbl_share          = $is_hebrew ? 'נתח הכנסה' : 'Share';
+            $lbl_sales_3m       = $is_hebrew ? 'מכירות — 3 החודשים האחרונים' : 'Sales — Last 3 Months';
+            $lbl_vs_prev_month  = $is_hebrew ? 'מול חודש קודם' : 'vs prev month';
             $lbl_source_section = $is_hebrew ? 'לידים לפי מקור' : 'Leads by Source';
             $lbl_source_col     = $is_hebrew ? 'מקור' : 'Source';
             $lbl_reco_section   = $is_hebrew ? 'המלצות לשיפור' : 'Recommendations';
@@ -1302,6 +1330,51 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 }
                 $html .= '</table>';
                 $html .= '</td></tr>';
+
+                // Sales over the last 3 complete months (3 side-by-side boxes,
+                // oldest -> newest), each with its revenue, orders, and the
+                // month-over-month revenue change so they can be compared.
+                $sales_months = isset( $report['sales_last_months'] ) && is_array( $report['sales_last_months'] ) ? $report['sales_last_months'] : array();
+                if ( ! empty( $sales_months ) ) {
+                    $m_count = count( $sales_months );
+
+                    $html .= '<tr><td height="14" style="height:14px;line-height:14px;font-size:1px;">&nbsp;</td></tr>';
+                    $html .= '<tr><td style="padding:0 16px 8px 16px;font-size:14px;line-height:18px;font-weight:bold;color:#1a3252;text-align:' . esc_attr( $align_primary ) . ';' . $font . '">' . esc_html( $lbl_sales_3m ) . '</td></tr>';
+                    $html .= '<tr><td style="padding:0 16px;">';
+                    $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>';
+
+                    foreach ( $sales_months as $m_idx => $m ) {
+                        $pad = ( 0 === $m_idx ) ? 'padding-right:6px;' : ( ( $m_idx === $m_count - 1 ) ? 'padding-left:6px;' : 'padding:0 6px;' );
+                        $html .= '<td width="33%" style="vertical-align:top;' . $pad . '">';
+                        $html .= '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4ebf4;background:#fafbfd;height:100%;">';
+                        $html .= '<tr><td style="padding:12px 10px;text-align:center;' . $font . '">';
+                        $html .= '<div style="font-size:11px;line-height:14px;color:#4a5d7a;font-weight:bold;' . $font . '">' . esc_html( $m['label'] ) . '</div>';
+                        $html .= '<div dir="ltr" style="font-size:20px;line-height:24px;font-weight:bold;color:#1a8a50;margin-top:6px;text-align:center;' . $ltr_style . $font . '">' . esc_html( $fmt_money( isset( $m['revenue'] ) ? $m['revenue'] : 0 ) ) . '</div>';
+                        $html .= '<div dir="ltr" style="font-size:11px;line-height:14px;color:#60758f;margin-top:4px;text-align:center;' . $ltr_style . $font . '">' . esc_html( $fmt_count( isset( $m['orders'] ) ? $m['orders'] : 0 ) . ' ' . $lbl_orders ) . '</div>';
+
+                        $t = ( isset( $m['trend'] ) && is_array( $m['trend'] ) ) ? $m['trend'] : null;
+                        if ( null === $t ) {
+                            $html .= '<div style="font-size:13px;line-height:16px;color:#c3c9d4;margin-top:6px;text-align:center;' . $font . '">&mdash;</div>';
+                        } else {
+                            if ( 'flat' === $t['direction'] ) {
+                                $tcolor = '#8a9bb0';
+                                $ttext  = $lbl_no_change;
+                            } else {
+                                $sign   = $t['delta'] > 0 ? '+' : '';
+                                $tcolor = ( 'down' === $t['direction'] ) ? '#c0392b' : '#1a8a50';
+                                $ttext  = $sign . $t['pct'] . '%';
+                            }
+                            $html .= '<div dir="ltr" style="font-size:12px;line-height:15px;font-weight:bold;color:' . esc_attr( $tcolor ) . ';margin-top:6px;text-align:center;' . $ltr_style . $font . '">' . esc_html( $ttext ) . '</div>';
+                            $html .= '<div style="font-size:9px;line-height:12px;color:#8a9bb0;text-align:center;' . $font . '">' . esc_html( $lbl_vs_prev_month ) . '</div>';
+                        }
+
+                        $html .= '</td></tr></table>';
+                        $html .= '</td>';
+                    }
+
+                    $html .= '</tr></table>';
+                    $html .= '</td></tr>';
+                }
             }
 
             // Spacing before sources table.
@@ -1577,7 +1650,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
                 'brn-lead-count-tracker',
                 plugin_dir_url( __FILE__ ) . 'assets/js/brn-lead-count-tracker.js',
                 array(),
-                '1.7.7',
+                '1.7.8',
                 true
             );
 
@@ -1868,7 +1941,7 @@ if ( ! class_exists( 'BRN_Lead_Count' ) ) {
 
             $rest_url     = rest_url( 'brn/v1/track' );
             $token        = $this->get_tracking_token();
-            $plugin_ver   = '1.7.7';
+            $plugin_ver   = '1.7.8';
             $rest_enabled = (bool) get_option( 'permalink_structure', '' );
             ?>
             <div class="wrap">
