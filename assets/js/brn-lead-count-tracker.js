@@ -250,60 +250,10 @@
     }, true);
 
     // -----------------------------------------------------------------------
-    // Native form submissions (not Elementor).
+    // Form leads: ONLY Elementor form submissions count as a form lead.
+    // Native <form> submits (WooCommerce checkout / cart / my-account, site
+    // search, login, etc.) are intentionally NOT tracked — they are not leads.
     // -----------------------------------------------------------------------
-
-    // Search/filter forms are NOT leads. A WordPress or WooCommerce search box
-    // submits a normal <form> (role="search", an input[name="s"] or
-    // input[type="search"], a "search" class, and method=GET), which would
-    // otherwise be logged as a false "form_submit" lead on every search.
-    // Lead/contact forms POST; search and filter forms navigate via GET, so a
-    // GET method is treated as a non-lead submission too.
-    function isNonLeadForm(form) {
-        try {
-            if ((form.getAttribute('role') || '').toLowerCase() === 'search') {
-                return true;
-            }
-            if (form.querySelector('input[type="search"], input[name="s"]')) {
-                return true;
-            }
-            if (((form.className || '').toString().toLowerCase()).indexOf('search') !== -1) {
-                return true;
-            }
-            if ((form.method || 'get').toLowerCase() === 'get') {
-                return true;
-            }
-        } catch (e) {}
-        return false;
-    }
-
-    document.addEventListener('submit', function (event) {
-        var form = event.target;
-        if (!form || form.tagName !== 'FORM') {
-            return;
-        }
-
-        // Skip Elementor forms — handled separately below.
-        if (form.classList && form.classList.contains('elementor-form')) {
-            return;
-        }
-
-        // Skip site search / filter / navigation forms (not leads).
-        if (isNonLeadForm(form)) {
-            return;
-        }
-
-        var parts  = [];
-        var id     = (form.getAttribute('id') || '').trim();
-        var name   = (form.getAttribute('name') || '').trim();
-        var action = (form.getAttribute('action') || '').trim();
-
-        if (id)     { parts.push('id:' + id); }
-        if (name)   { parts.push('name:' + name); }
-        if (action) { parts.push('action:' + action.substring(0, 80)); }
-
-        sendLead('form_submit', parts.join(' | '));
-    }, true);
 
     // -----------------------------------------------------------------------
     // Elementor Pro forms — submit via AJAX, no native submit event fires.
